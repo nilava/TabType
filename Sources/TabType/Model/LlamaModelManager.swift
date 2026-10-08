@@ -84,6 +84,12 @@ final class LlamaModelManager: ObservableObject {
         }
         if isInstalled(initial) {
             load(initial)
+        } else if let entry = entry(id: selectedID), !selectedID.hasPrefix(Self.customPrefix),
+                  FileManager.default.fileExists(atPath: store.url(for: entry).appendingPathExtension("part").path) {
+            // A download of the selected model was interrupted (quit, crash,
+            // relaunch): pick it up where it stopped.
+            Log.shared.info("v2 engine: resuming the interrupted download of \(selectedID)")
+            download(selectedID)
         } else if case .noModel = status {
             Log.shared.info("v2 engine: selected model \(selectedID) is not downloaded yet")
         }

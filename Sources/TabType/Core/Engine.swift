@@ -1007,6 +1007,7 @@ final class Engine {
         let keystrokeAt = lastKeystrokeAt
         var previous: CGRect?
         var placed = false
+        var retries = 0
         observeFocusedField()
 
         func attempt() {
@@ -1033,6 +1034,19 @@ final class Engine {
             guard ready else {
                 pendingPlacement = attempt
                 DispatchQueue.main.asyncAfter(deadline: .now() + min(0.016, max(0.001, deadline - elapsed))) {
+                    attempt()
+                }
+                return
+            }
+            // Retry plan: no caret from the app yet — ask again (40 / 80 / 160ms)
+            // before settling for the pill.
+            if caretRect == nil, retries < 3, element != nil {
+                let delay = 0.04 * Double(1 << retries)
+                retries += 1
+                pendingPlacement = attempt
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    // Only the deadline elapsed; the attempt must not be dropped
+                    // as stale by a keystroke check it already passed.
                     attempt()
                 }
                 return
@@ -1103,6 +1117,33 @@ final class Engine {
     private func dropPendingEdits() {
         fieldRead = nil
         pendingKeys.removeAll()
+    }
+
+    /// Line-height cache: the caret height each field usually reports. A caret
+    /// far taller or shorter than that (an inflated CSS line box for one
+    /// keystroke, a half-laid-out line) keeps its centre but gets the usual
+    /// height; a new height that persists three times becomes the usual one.
+    private var lineHeights: [String: (height: CGFloat, strikes: Int)] = [:]
+
+    private func normalizedLineHeight(_ caret: CGRect) -> CGRect {
+        guard caret.height > 2, let element = AccessibilityBridge.focusedElement() else { return caret }
+        let frame = AccessibilityBridge.elementFrame(of: element)
+        let key = "\(AccessibilityBridge.frontmostBundleId() ?? "?")|\(Int(frame?.minX ?? 0)),\(Int(frame?.width ?? 0))"
+        guard let usual = lineHeights[key] else {
+            lineHeights[key] = (caret.height, 0)
+            return caret
+        }
+        if caret.height <= usual.height * 1.6, caret.height >= usual.height * 0.6 {
+            lineHeights[key] = (usual.height * 0.8 + caret.height * 0.2, 0)
+            return caret
+        }
+        if usual.strikes + 1 >= 3 {
+            lineHeights[key] = (caret.height, 0)   // the field really changed
+            return caret
+        }
+        lineHeights[key] = (usual.height, usual.strikes + 1)
+        Log.shared.debug("placement: caret height \(Int(caret.height)) → usual \(Int(usual.height)) for this field")
+        return CGRect(x: caret.minX, y: caret.midY - usual.height / 2, width: caret.width, height: usual.height)
     }
 
     /// Watch the focused field's own notifications (re-created when focus moves).
@@ -1680,7 +1721,8 @@ final class Engine {
             }
             return
         }
-        if let caretRect = inlineCaret {
+        if var caretRect = inlineCaret {
+            caretRect = normalizedLineHeight(caretRect)
             // The field's own font and text colour, as the app reports them over AX
             // (AXFont / AXForegroundColor); a caret-height guess only when it doesn't.
             let element = AccessibilityBridge.focusedElement()
