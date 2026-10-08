@@ -30,7 +30,7 @@ final class Engine {
     private var buffer = ""
     /// The ghost suggestion's lifecycle (type-through, Tab remainders, stale and
     /// repeated results) — see `SuggestionSession`.
-    private var session = SuggestionSession()
+    private var session = SuggestionSession() { didSet { refreshHotKeys() } }
     private var currentSuggestion: String? { session.text }
     /// What comes AFTER the suggestion on screen, computed in the background while
     /// it's shown: Tab through the last word and the next words appear at once,
@@ -72,6 +72,9 @@ final class Engine {
     /// input method) — and replaces the copy.
     private var expectedInput: String?
     private var axBaseline: String?
+    /// Where the caret should be (UTF-16 offset) once the app has applied every
+    /// pending keystroke: placement is ready when the app's caret gets there.
+    private var expectedCaret: Int?
     private var expectedLimit = AppSettings.inputContextChars
 
     /// Notifications from the focused field; a pending placement re-checks the
@@ -205,6 +208,7 @@ final class Engine {
         clipboardChangeCount = NSPasteboard.general.changeCount
         clipboardFirstSeen = .distantPast
         isRunning = true
+        refreshHotKeys()
         return true
     }
 
@@ -595,6 +599,7 @@ final class Engine {
         accessoryToggleObserver?.cancel()
         accessoryToggleObserver = nil
         accessory.hide()
+        HotKeyCenter.shared.setActive([])
         isRunning = false
     }
 
@@ -613,8 +618,72 @@ final class Engine {
             }
         }
         monitor.handleControlKey = { keyCode, flags in
-            MainActor.assumeIsolated { self.handleControlKey(keyCode: keyCode, flags: flags) }
+            MainActor.assumeIsolated {
+                defer { self.refreshHotKeys() }
+                return self.handleControlKey(keyCode: keyCode, flags: flags)
+            }
         }
+        monitor.isHotKey = { keyCode, flags in
+            MainActor.assumeIsolated { self.isHotKeyManaged(keyCode: keyCode, flags: flags) }
+        }
+        HotKeyCenter.shared.onPress = { binding in self.handleHotKey(binding) }
+    }
+
+    // MARK: - Hotkeys
+
+    /// Keys acted on through system hotkeys: shortcuts always; accept and dismiss
+    /// while there is something to accept or dismiss; picker keys while a picker
+    /// is open. Taken from the app ONLY then (Cotypist's listen-only design).
+    private func desiredHotKeys() -> Set<KeyBinding> {
+        var keys = Set([settings.toggleKey, settings.forceActivateKey, settings.appPauseKey,
+                        settings.wordAlternativesKey].filter(\.isSet))
+        if currentSuggestion != nil || inlineCommand.isActive {
+            let tabDisabled = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId()).disableTabKey
+            for key in [settings.acceptWordKey, settings.acceptAllKey] where key.isSet {
+                if tabDisabled && key.keyCode == 48 { continue }
+                keys.insert(key)
+            }
+            if settings.dismissKey.isSet { keys.insert(settings.dismissKey) }
+        }
+        if inlineCommand.isActive {
+            keys.insert(KeyBinding(keyCode: 126, modifiers: 0))   // ↑ / ↓ in the emoji picker
+            keys.insert(KeyBinding(keyCode: 125, modifiers: 0))
+        }
+        if alternatives.isActive {
+            for code in [18, 19, 20, 21, 53] { keys.insert(KeyBinding(keyCode: code, modifiers: 0)) }
+        }
+        return keys
+    }
+
+    private func refreshHotKeys() {
+        guard isRunning else { return }
+        HotKeyCenter.shared.setActive(desiredHotKeys())
+    }
+
+    /// The tap ignores these: they're acted on only through hotkeys, so a key the
+    /// app also received is never acted on twice.
+    private func isHotKeyManaged(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        let shortcuts = [settings.acceptWordKey, settings.acceptAllKey, settings.dismissKey, settings.toggleKey,
+                         settings.forceActivateKey, settings.appPauseKey, settings.wordAlternativesKey]
+        if shortcuts.contains(where: { $0.matches(keyCode: keyCode, flags: flags) }) { return true }
+        return HotKeyCenter.shared.isRegistered(keyCode: keyCode, flags: flags)
+    }
+
+    /// A hotkey fired: act on it, or hand the key back to the app untouched.
+    private func handleHotKey(_ binding: KeyBinding) {
+        let flags = CGEventFlags(rawValue: binding.modifiers)
+        let decision = handleControlKey(keyCode: Int64(binding.keyCode), flags: flags)
+        switch decision {
+        case .swallow:
+            break
+        case .passthrough, .notControl:
+            HotKeyCenter.shared.suspend(binding)
+            HotKeyCenter.repost(keyCode: binding.keyCode, flags: flags)
+        case .passthroughStrippingOption:
+            HotKeyCenter.shared.suspend(binding)
+            HotKeyCenter.repost(keyCode: binding.keyCode, flags: flags.subtracting(.maskAlternate))
+        }
+        DispatchQueue.main.async { self.refreshHotKeys() }
     }
 
     /// Map a keydown against configured shortcut bindings and navigation keys.
@@ -747,6 +816,7 @@ final class Engine {
     }
 
     private func handleEdit(chars: String, isDeletion: Bool) {
+        defer { refreshHotKeys() }   // an inline command may have opened or closed
         // Freeze screen captures while typing (see ScreenContextProvider), and
         // capture once the typing pauses — otherwise a long message keeps the
         // context from before it started.
@@ -891,7 +961,12 @@ final class Engine {
             let caretRect = element.flatMap { AccessibilityBridge.caretRect(of: $0) }
             let elapsed = Date().timeIntervalSince(keystrokeAt)
             var ready = elapsed >= deadline
-            if !ready, earlyOnCaretMove, let caretRect, let anchor = caretAnchor,
+            // The app's caret reached where our pending keystrokes put it.
+            if !ready, earlyOnCaretMove, let caretRect, let expected = expectedCaret,
+               let element, AccessibilityBridge.caretOffset(of: element) == expected {
+                ready = !policy.laggyCaret || previous.map { Self.sameCaret($0, caretRect) } == true
+                previous = caretRect
+            } else if !ready, earlyOnCaretMove, expectedCaret == nil, let caretRect, let anchor = caretAnchor,
                Self.caretMoved(caretRect, from: anchor) {
                 ready = !policy.laggyCaret || previous.map { Self.sameCaret($0, caretRect) } == true
                 previous = caretRect
@@ -914,16 +989,18 @@ final class Engine {
 
     /// Apply a keystroke to the local copy of the field (see `expectedInput`).
     private func applyPendingEdit(chars: String, isDeletion: Bool) {
-        guard var text = expectedInput else { return }
+        guard var text = expectedInput else { expectedCaret = nil; return }
         if isDeletion {
-            guard !text.isEmpty else { expectedInput = nil; return }
+            guard !text.isEmpty else { expectedInput = nil; expectedCaret = nil; return }
+            if let caret = expectedCaret { expectedCaret = caret - (text.last.map { String($0).utf16.count } ?? 1) }
             text.removeLast()
         } else {
             // Only plain text keeps the copy exact; anything else re-reads AX.
             guard !chars.isEmpty, chars.allSatisfy({ !$0.isNewline || $0 == "\n" }),
                   !chars.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" })
-            else { expectedInput = nil; return }
+            else { expectedInput = nil; expectedCaret = nil; return }
             text += chars.replacingOccurrences(of: "\r", with: "\n")
+            if let caret = expectedCaret { expectedCaret = caret + chars.utf16.count }
             if text.count > expectedLimit { text = String(text.suffix(expectedLimit)) }
         }
         expectedInput = text
@@ -935,6 +1012,7 @@ final class Engine {
         guard let expected = expectedInput, let baseline = axBaseline else {
             expectedInput = axInput
             axBaseline = axInput
+            expectedCaret = AccessibilityBridge.focusedElement().flatMap(AccessibilityBridge.caretOffset)
             return axInput
         }
         if axInput == baseline, expected != baseline { return expected }   // app lagging
@@ -948,6 +1026,7 @@ final class Engine {
         }
         expectedInput = axInput
         axBaseline = axInput
+        expectedCaret = AccessibilityBridge.focusedElement().flatMap(AccessibilityBridge.caretOffset)
         return axInput
     }
 
@@ -955,6 +1034,7 @@ final class Engine {
     private func dropPendingEdits() {
         expectedInput = nil
         axBaseline = nil
+        expectedCaret = nil
     }
 
     /// Watch the focused field's own notifications (re-created when focus moves).
@@ -1793,7 +1873,8 @@ final class Engine {
                 // Re-anchor at the settled caret — unless more Tabs already moved on.
                 guard self.currentSuggestion == next else { return }
                 self.presentWhenSettled(suggestion: next, isNewSuggestion: false,
-                                        allowWrap: self.shownAllowWrap, earlyOnCaretMove: false)
+                                        allowWrap: self.shownAllowWrap,
+                                    earlyOnCaretMove: self.expectedCaret != nil)
                 return
             }
             if remainder.isEmpty {
@@ -1814,7 +1895,8 @@ final class Engine {
             // it here would resurrect the older, longer text.
             guard self.currentSuggestion == remainder else { return }
             self.presentWhenSettled(suggestion: remainder, isNewSuggestion: false,
-                                    allowWrap: self.shownAllowWrap, earlyOnCaretMove: false)
+                                    allowWrap: self.shownAllowWrap,
+                                    earlyOnCaretMove: self.expectedCaret != nil)
         }
         return true
     }

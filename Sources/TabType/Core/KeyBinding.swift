@@ -2,7 +2,7 @@ import CoreGraphics
 import AppKit
 
 /// A rebindable keyboard shortcut: a key code plus modifier flags.
-struct KeyBinding: Codable, Equatable {
+struct KeyBinding: Codable, Hashable {
     var keyCode: Int
     /// Raw bits of the relevant `CGEventFlags` (cmd/shift/opt/ctrl only).
     var modifiers: UInt64

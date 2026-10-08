@@ -29,6 +29,10 @@ final class KeystrokeMonitor {
     /// `isDeletion` is true for delete/backspace.
     var onEdit: ((_ characters: String, _ isDeletion: Bool, _ keyCode: Int64) -> Void)?
 
+    /// Keys acted on through system hotkeys (`HotKeyCenter`) — the tap leaves
+    /// them alone entirely.
+    var isHotKey: ((_ keyCode: Int64, _ flags: CGEventFlags) -> Bool)?
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -43,7 +47,7 @@ final class KeystrokeMonitor {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,           // active tap: may modify/suppress events
+            options: .listenOnly,           // observe only: never delays or drops a key (Cotypist)
             eventsOfInterest: CGEventMask(mask),
             callback: { _, type, event, refcon in
                 guard let refcon else { return Unmanaged.passUnretained(event) }
@@ -89,14 +93,12 @@ final class KeystrokeMonitor {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        // Let the engine decide control keys (accept/dismiss/toggle bindings, nav).
-        switch handleControlKey?(keyCode, flags) ?? .notControl {
-        case .swallow: return nil
-        case .passthrough: return Unmanaged.passUnretained(event)
-        case .passthroughStrippingOption:
-            event.flags = flags.subtracting(.maskAlternate)
+        // Shortcuts are hotkeys now; the tap only observes the rest.
+        if isHotKey?(keyCode, flags) == true { return Unmanaged.passUnretained(event) }
+        // Navigation and other control keys: observed (they clear a suggestion,
+        // remember a sent message…), never consumed.
+        if (handleControlKey?(keyCode, flags) ?? .notControl) != .notControl {
             return Unmanaged.passUnretained(event)
-        case .notControl: break
         }
 
         let hasCommandLike = flags.contains(.maskCommand) || flags.contains(.maskControl)
