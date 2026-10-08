@@ -40,6 +40,8 @@ struct AppPolicy {
     /// Suggestions appear in a floating mirror of the line (Cotypist's text
     /// mirroring) — for apps where inline ghost text can't be placed reliably.
     var textMirror: Bool = false
+    /// Terminal: suggest only inside an agent prompt, completing its input.
+    var terminalAgentOnly: Bool = false
     /// Suggest in fields of any size (normally small fields are skipped).
     var ignoreSizeThresholds: Bool = false
     /// Font-size-from-caret-height ratio, used only when the field's real AX font
@@ -177,7 +179,8 @@ enum AppPolicyStore {
         "com.callpod.keepermac", "com.lastpass.LastPass",
     ]
 
-    /// Terminals — autocomplete is disruptive; disabled by default.
+    /// Terminals — suggestions only inside an AI agent's prompt (see
+    /// `TerminalPrompt`), never at the shell.
     private static let terminals: Set<String> = [
         "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
         "com.mitchellh.ghostty", "io.alacritty", "net.kovidgoyal.kitty",
@@ -250,10 +253,15 @@ enum AppPolicyStore {
 
     static func policy(forBundleId id: String?) -> AppPolicy {
         guard let id else { return AppPolicy() }
-        if passwordManagers.contains(id) || terminals.contains(id) {
+        if passwordManagers.contains(id) {
             return AppPolicy(isEnabled: false)
         }
         var policy = AppPolicy()
+        if terminals.contains(id) {
+            policy.terminalAgentOnly = true
+            policy.includesScreenContext = false   // the buffer above is the context
+            policy.allowsMidLine = true            // the prompt box's border follows the caret
+        }
         if pasteApps.contains(id) { policy.insertionStrategy = .paste }
         if chatApps.contains(id) {
             policy.forceScreenContext = true

@@ -135,3 +135,21 @@ final class HiddenInputTests: XCTestCase {
         XCTAssertFalse(AccessibilityBridge.hiddenInputAgrees(CGRect(x: 80, y: 300, width: 1, height: 18), field))
     }
 }
+
+final class TerminalPromptTests: XCTestCase {
+    func testClaudeCodeStyleBox() {
+        let screen = "● Done.\n\n╭──────────────────────────────╮\n│ > can you also fix the tes"
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "can you also fix the tes")
+    }
+
+    func testCodexGutter() {
+        XCTAssertEqual(TerminalPrompt.input(before: "some output\n› refactor the parser so"), "refactor the parser so")
+    }
+
+    func testShellPromptsAreNotAgents() {
+        XCTAssertNil(TerminalPrompt.input(before: "nilava@mac TabType % git sta"))
+        XCTAssertNil(TerminalPrompt.input(before: "$ ls -la"))
+        // A ">" continuation line without a box isn't an agent prompt.
+        XCTAssertNil(TerminalPrompt.input(before: "echo \"hi\n> there"))
+    }
+}

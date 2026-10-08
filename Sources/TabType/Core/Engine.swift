@@ -1167,6 +1167,19 @@ final class Engine {
             ctx.input = current
             ctx.dedupKey += "|pending|" + current
         }
+        // Terminals: only an AI agent's prompt gets suggestions, and only its
+        // input is continued (Cotypist hides completions otherwise).
+        if policy.terminalAgentOnly {
+            guard let typed = TerminalPrompt.input(before: ctx.input) else {
+                if currentSuggestion != nil { clearSuggestion() }
+                Log.shared.debug("predict skipped: no agent prompt detected in the terminal")
+                return
+            }
+            ctx.input = typed
+            ctx.afterCursor = ""
+            ctx.hasInput = !typed.isEmpty
+            ctx.dedupKey += "|agent"
+        }
 
         // Google Docs renders to canvas — AX text is unavailable until the user
         // enables its accessibility mode. Tell them ONCE how to fix it.
@@ -1390,6 +1403,7 @@ final class Engine {
         var fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
                                          inputChars: expectedLimit)
         fresh.input = reconcile(axInput: fresh.input)
+        if policy.terminalAgentOnly { fresh.input = TerminalPrompt.input(before: fresh.input) ?? "" }
         // Splice: the user typed ahead, and what they typed is the start of this
         // suggestion — show the rest of it for the text as it is now.
         var requestedInput = ctxInput
