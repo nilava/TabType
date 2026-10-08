@@ -31,6 +31,8 @@ final class ScreenContextProvider: ObservableObject {
     private(set) var history: [Entry] = []
     private var lastCaptureStarted = Date.distantPast
     private var capturing = false
+    /// A capture is running right now.
+    var isCapturing: Bool { capturing }
 
     private let minInterval: TimeInterval = 1.5   // throttle captures
     private let maxEntries = 20

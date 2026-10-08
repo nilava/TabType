@@ -90,6 +90,17 @@ final class Engine {
     /// Notifications from the focused field; a pending placement re-checks the
     /// caret the moment one arrives (polling stays as the backstop).
     private var fieldObserver: AXFieldObserver?
+    /// The screen context a message is being typed against: kept for the whole
+    /// typing burst, so small capture-to-capture differences don't rewrite the
+    /// prompt head (and the model's cache) between keystrokes. Refreshed after
+    /// a 2s pause, or when the app or site changes.
+    private var lockedContext: (app: String, host: String?, text: String)?
+    /// Seconds between the latest keystroke and the one before it.
+    private var gapBeforeLastKey: TimeInterval = .infinity
+    /// First suggestion in a chat: waiting (once per app/site) for its first
+    /// conversation capture.
+    private var awaitingFirstContext = false
+    private var waitedForContext: (key: String, since: Date)?
     /// Caret rect the inline ghost was last painted at.
     private var lastPaintedCaret: CGRect?
     /// The element focus last moved to (see `installFocusObserver`).
@@ -374,6 +385,7 @@ final class Engine {
                 let now = AccessibilityBridge.focusedElement()
                 if let now, let before = self.observedFocus, CFEqual(now, before) { return }
                 self.observedFocus = now
+                self.lockedContext = nil
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
                 self.dropPendingEdits()
@@ -804,6 +816,7 @@ final class Engine {
         if navKeys.contains(keyCode) {
             if inlineCommand.isActive { inlineCommand.cancel() }
             dropPendingEdits()   // the caret moves, or the message is sent
+            lockedContext = nil   // a sent message changes the conversation
             // Return in a chat app usually SENDS — remember what was said, so the
             // next suggestion can continue the user's side of the conversation.
             if keyCode == 36, !flags.contains(.maskShift) {
@@ -832,6 +845,7 @@ final class Engine {
     /// text length as they are BEFORE the edit.
     private func beforeEditDelivered() {
         let element = AccessibilityBridge.focusedElement()
+        gapBeforeLastKey = Date().timeIntervalSince(lastKeystrokeAt)
         lastKeystrokeAt = Date()
         caretAnchor = element.flatMap { AccessibilityBridge.caretRect(of: $0) }
         pendingBaselineLen = element.flatMap { AccessibilityBridge.textLength(of: $0) }
@@ -1268,8 +1282,39 @@ final class Engine {
         // One cap for both the fetch and the prompt budget so they can't diverge.
         // Host-aware: in browsers, only same-site entries count as current context.
         let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
-        let screenContext = screenContextEnabled
+        var screenContext = screenContextEnabled
             ? ScreenContextProvider.shared.contextText(for: bundleId, cap: screenCap, host: host) : ""
+        if screenContextEnabled {
+            let app = bundleId ?? ""
+            // A thin capture (still loading, mostly chrome) isn't worth holding
+            // on to once a fuller one exists.
+            let thin = screenContext.count >= 200 && (lockedContext?.text.count ?? 0) < screenContext.count / 2
+            if let locked = lockedContext, locked.app == app, locked.host == host,
+               gapBeforeLastKey < 2.0, !locked.text.isEmpty, !thin {
+                screenContext = locked.text   // mid-message: the context it started with
+            } else {
+                lockedContext = (app, host, screenContext)
+            }
+            // A chat's first conversation capture is on its way: wait for it
+            // (once, at most 0.3s) — a suggestion from the window title alone is
+            // a guess. The capture's arrival re-kicks prediction.
+            let waitKey = app + "|" + (host ?? "")
+            if waitedForContext?.key != waitKey { waitedForContext = (waitKey, Date()) }
+            if screenContext.isEmpty, policy.forceScreenContext, ScreenContextProvider.shared.isCapturing,
+               let started = waitedForContext?.since, Date().timeIntervalSince(started) < 0.3 {
+                if awaitingFirstContext { return }   // already waiting; the capture or timer re-kicks
+                awaitingFirstContext = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self, self.awaitingFirstContext else { return }
+                    self.awaitingFirstContext = false
+                    self.lastPredictedPrompt = ""
+                    self.schedulePrediction()
+                }
+                Log.shared.debug("predict: waiting for the first conversation capture")
+                return
+            }
+            awaitingFirstContext = false
+        }
         expectedLimit = policy.inputContextChars ?? AppSettings.inputContextChars
         let readAt = Engine.uptimeNow()
         var ctx = ContextReader.gather(
