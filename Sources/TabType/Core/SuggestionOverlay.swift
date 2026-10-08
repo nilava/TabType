@@ -83,6 +83,10 @@ final class SuggestionOverlay {
                     fieldRect: CGRect? = nil) -> Bool {
         guard let panel, !text.isEmpty else { hide(); return true }
         background.isHidden = true
+        // A previous mirror presentation's opaque backdrop and fake caret must not
+        // linger under a plain inline ghost.
+        mirrorBackdrop.isHidden = true
+        caretBar.isHidden = true
 
         let ghostColor = (color ?? NSColor.secondaryLabelColor).withAlphaComponent(opacity)
         let padding: CGFloat = 1   // tight against the typed word, like the real text

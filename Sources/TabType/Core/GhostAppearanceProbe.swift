@@ -146,31 +146,35 @@ final class GhostAppearanceProbe: ObservableObject {
     }
 
     nonisolated private static func capture(rect: CGRect) async -> CGImage? {
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: true)
-            // Find the display containing the caret (rect is top-left global coords).
-            guard let display = content.displays.first(where: {
-                displayRectTopLeft($0).intersects(rect)
-            }) ?? content.displays.first else { return nil }
+        await captureScaled(rect: rect)?.image
+    }
 
-            let filter = SCContentFilter(display: display, excludingWindows: [])
-            let config = SCStreamConfiguration()
-            // Capture just the sample strip (sourceRect is in points, top-left origin
-            // relative to the display).
-            let local = CGRect(x: rect.minX - display.frame.minX,
-                               y: rect.minY - displayRectTopLeft(display).minY,
-                               width: rect.width, height: rect.height)
-            config.sourceRect = local
-            config.width = Int(rect.width * 2)
-            config.height = Int(rect.height * 2)
-            config.showsCursor = false
+    /// Screenshot of `rect` (top-left global points) at the display's real pixel
+    /// scale, with TabType's own windows excluded so the ghost never sees itself.
+    nonisolated static func captureScaled(rect: CGRect) async -> (image: CGImage, scale: Double)? {
+        guard let content = await ShareableContentCache.shared.content() else { return nil }
+        guard let display = content.displays.first(where: { displayRectTopLeft($0).intersects(rect) })
+                ?? content.displays.first else { return nil }
+        let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+        let scale = pixelScale(of: display)
+        let config = SCStreamConfiguration()
+        // sourceRect is in points, top-left origin relative to the display.
+        config.sourceRect = CGRect(x: rect.minX - display.frame.minX,
+                                   y: rect.minY - displayRectTopLeft(display).minY,
+                                   width: rect.width, height: rect.height)
+        config.width = max(1, Int((rect.width * scale).rounded()))
+        config.height = max(1, Int((rect.height * scale).rounded()))
+        config.showsCursor = false
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        else { return nil }
+        return (image, scale)
+    }
 
-            return try await SCScreenshotManager.captureImage(
-                contentFilter: filter, configuration: config)
-        } catch {
-            return nil
-        }
+    /// Backing scale of a display (2 on Retina, 1 on most external monitors).
+    nonisolated private static func pixelScale(of display: SCDisplay) -> Double {
+        guard let mode = CGDisplayCopyDisplayMode(display.displayID), display.width > 0 else { return 2 }
+        return max(1, Double(mode.pixelWidth) / Double(display.width))
     }
 
     /// Max luminance distance of any sampled pixel from the modal (background)
@@ -276,5 +280,24 @@ final class GhostAppearanceProbe: ObservableObject {
             textColor: NSColor(srgbRed: fg.0, green: fg.1, blue: fg.2, alpha: 1),
             backgroundColor: NSColor(srgbRed: bg.0, green: bg.1, blue: bg.2, alpha: 1),
             isDark: isDark)
+    }
+}
+
+/// `SCShareableContent` enumerates every window on screen — too slow to repeat for
+/// each probe. Displays and our own app rarely change, so a few seconds is fine.
+/// (A lock, not an actor: `SCShareableContent` isn't Sendable.)
+final class ShareableContentCache: @unchecked Sendable {
+    static let shared = ShareableContentCache()
+    private let lock = NSLock()
+    private var cached: (content: SCShareableContent, at: Date)?
+
+    func content() async -> SCShareableContent? {
+        if let hit = lock.withLock({ cached.flatMap { Date().timeIntervalSince($0.at) < 5 ? $0.content : nil } }) {
+            return hit
+        }
+        guard let fresh = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        else { return nil }
+        lock.withLock { cached = (fresh, Date()) }
+        return fresh
     }
 }

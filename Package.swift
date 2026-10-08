@@ -33,7 +33,9 @@ let package = Package(
             name: "TabTypeKit",
             dependencies: ["llama"],
             path: "Sources/TabTypeKit",
-            resources: [.process("Catalog/models.json")]
+            resources: [.process("Catalog/models.json"), .copy("Placement/Fonts")],
+            // Hot numeric code (decoder, font fitting) — optimize even in Debug builds.
+            swiftSettings: [.unsafeFlags(["-O"])]
         ),
         .executableTarget(
             name: "TabTypeEval",

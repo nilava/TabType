@@ -283,14 +283,17 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Clipboard (opt-in, fresh, prose-only), recent sent messages from AX, credential/secure-field skip — already in place
 - [ ] Hidden-input editors (CodeMirror/Monaco) and web text-marker reading when AXValue is missing
 
-### Phase 5 — Placement
-- [ ] `CaretResolver` with retry plan + `LineHeightCache`
-- [ ] Bundle OFL fonts (Inter, Roboto, Open Sans, Source Sans 3, Source Code Pro, Lato, Nunito, JetBrains Mono) with licences
-- [ ] `FontFitter` (CoreText render, profile RMSE, colour + dark-mode, confidence, cache, debug PNG dump)
-- [ ] `GhostRenderer` inline mode with wrapping
-- [ ] `TextMirror` overlay mode
-- [ ] Anchored pill fallback; per-app font scale / vertical offset / size thresholds
-- [ ] Manual test matrix: TextEdit, Notes, Mail, Messages, Slack, Claude desktop, Safari/Chrome (Gmail, Docs), VS Code, Terminal
+### Phase 5 — Placement ✅ (core)
+- [x] Bundled OFL fonts (Inter, Roboto, Open Sans, Source Sans 3, Source Code Pro, Lato, Nunito, JetBrains Mono) with licences, registered at launch
+- [x] `FontFitter`: renders the line text in candidate fonts/sizes with CoreText and matches column/row ink profiles against the screenshot → family, size (¼ pt), baseline, ink/background colour, confidence. Coarse search at ~1 px/pt, family shortlist (+ system font), full-resolution decision. Tests recover Lato 15 pt, the system font on dark, Inter vs Roboto vs Open Sans, cropped lines; ~50 ms per fit
+- [x] `FieldFitCache`: one fit per field (app + window + caret height + field frame), reused for every ghost and every Tab-remainder repaint; ≥0.8 confidence or fall back to the ink-band heuristic; verbose mode dumps captured strips to ~/Library/Logs/TabType/fit
+- [x] Screen capture at the display's real pixel scale, excluding TabType's own windows, with the window list cached
+- [x] Text mirror uses the fitted font/baseline/colours when available
+- [x] Fixed: mirror backdrop/caret could linger under a later inline ghost
+- [x] TabTypeKit is compiled with -O even in Debug (decoder + fitter are hot loops)
+- [ ] Caret: AXBoundsForLine fallback, collapsed text-marker caret, line-height cache
+- [ ] Per-app font scale / vertical offset in the overrides UI
+- [ ] Manual test matrix in real apps (needs live typing: TextEdit, Notes, Mail, Messages, Slack, Claude, Safari/Chrome, VS Code, Terminal)
 
 ### Phase 6a — v2 engine in the app (pulled forward) ✅
 - [x] `LlamaEngine` plugs into the existing engine slot; v2 output bypasses v1's echo/assistant-speak/mid-word repair (exact insertion text); dictionary instant layer off for v2

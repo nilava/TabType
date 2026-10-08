@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import SwiftUI
+import TabTypeKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
@@ -64,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             // suggestion skips its system-prompt prefill (1-4s on big models).
             self?.engine.warmUpModel()
         }
+
+        // Register bundled fonts so ghost text can match fields that use them.
+        Log.shared.info("ghost fonts: \(BundledFonts.families.joined(separator: ", "))")
 
         // Start loading the selected engine's model + spell dictionary right away.
         startSelectedEngine()

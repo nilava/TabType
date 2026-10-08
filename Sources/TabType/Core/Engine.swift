@@ -1570,14 +1570,29 @@ final class Engine {
                 return limit
             }()
 
+            // Measured appearance of this field's text (font, size, baseline,
+            // colour), fitted once from a screenshot — see FieldFitCache.
+            let fitKey = [AccessibilityBridge.frontmostBundleId() ?? "?",
+                          AccessibilityBridge.focusedWindowTitle() ?? "",
+                          "\(Int(caretRect.height.rounded()))",
+                          "\(Int(elementFrame?.minX ?? 0)),\(Int(elementFrame?.width ?? 0))"].joined(separator: "|")
+            /// Rect whose vertically-centred label puts the fitted font's baseline
+            /// exactly on the field text's baseline.
+            func placed(_ fit: FieldFitCache.Fit, at caret: CGRect) -> CGRect {
+                let f = fit.font
+                let lineBox = f.ascender + abs(f.descender) + f.leading
+                let y = caret.minY + fit.baselineOffset - f.ascender - (caret.height - lineBox) / 2
+                return CGRect(x: caret.minX, y: y, width: caret.width, height: caret.height)
+            }
+
             // Paint at a SPECIFIC caret rect and font — the occupancy retry must
-            // render at the position it verified, and the ink-band probe may have
-            // refined the vertical position/size from the real glyph pixels.
-            let paint: (CGRect, NSFont) -> Void = { [weak self] rect, useFont in
+            // render at the position it verified, and the fit / ink-band probe may
+            // have refined the vertical position/size from the real glyph pixels.
+            let paint: (CGRect, NSFont, NSColor?) -> Void = { [weak self] rect, useFont, fittedColor in
                 guard let self else { return }
                 let shown = self.overlay.showInline(
                     text: suggestion, at: rect, font: useFont,
-                    opacity: self.settings.ghostOpacity, color: color,
+                    opacity: self.settings.ghostOpacity, color: fittedColor ?? color,
                     maxRightX: boxRight,
                     fieldRect: fieldRect)
                 if !shown {
@@ -1586,7 +1601,16 @@ final class Engine {
                 }
             }
 
-            guard isNewSuggestion else { paint(anchored, font); return }
+            guard isNewSuggestion else {
+                // Re-paint (type-through, Tab remainder): reuse the field's fit so
+                // the ghost's font never flips between words.
+                if let fit = FieldFitCache.shared.cached(key: fitKey) {
+                    paint(placed(fit, at: anchored), fit.font, fit.textColor)
+                } else {
+                    paint(anchored, font, nil)
+                }
+                return
+            }
 
             // Final occupancy check: AX caret geometry sometimes lies (stale
             // selection index, wrong y on wrapped lines in Electron) — before
@@ -1633,6 +1657,32 @@ final class Engine {
                         Log.shared.debug("placement: strip still occupied — showing HUD pill instead")
                         Statistics.shared.record(.occupiedFallback)
                         self.overlay.showHUD(text: suggestion, windowRect: windowRect)
+                        return
+                    }
+                }
+
+                // Best: the field's measured font/size/baseline/colour.
+                if self.settings.useScreenshotAppearance {
+                    let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
+                    if let fit = await FieldFitCache.shared.fit(caret: target, key: fitKey, lineText: lineText,
+                                                                verbose: self.settings.verboseLog) {
+                        guard self.currentSuggestion == suggestion else { return }
+                        let rect = placed(fit, at: target)
+                        if policy.laggyCaret, self.settings.textMirroring {
+                            let before = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 40) } ?? ""
+                            var tail = ""
+                            if let lastToken = before.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
+                               !before.hasSuffix(" "), !before.hasSuffix("\n") {
+                                tail = String(lastToken.suffix(24))
+                            }
+                            self.overlay.showMirror(
+                                typedTail: tail, suggestion: suggestion, caretRect: rect,
+                                baseline: target.minY + fit.baselineOffset, font: fit.font,
+                                textColor: fit.textColor, backgroundColor: fit.backgroundColor,
+                                ghostOpacity: self.settings.ghostOpacity, maxRightX: boxRight)
+                        } else {
+                            paint(rect, fit.font, fit.textColor)
+                        }
                         return
                     }
                 }
@@ -1698,7 +1748,7 @@ final class Engine {
                         maxRightX: boxRight)
                     return
                 }
-                paint(rect, useFont)
+                paint(rect, useFont, nil)
             }
         } else {
             overlay.showHUD(text: suggestion, windowRect: windowRect)
