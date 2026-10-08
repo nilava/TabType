@@ -27,7 +27,8 @@ final class KeystrokeMonitor {
 
     /// Called for text keydowns with the resolved characters (empty for non-text).
     /// `isDeletion` is true for delete/backspace.
-    var onEdit: ((_ characters: String, _ isDeletion: Bool, _ keyCode: Int64) -> Void)?
+    /// `timestamp`: when the key was pressed (uptime nanoseconds).
+    var onEdit: ((_ characters: String, _ isDeletion: Bool, _ keyCode: Int64, _ timestamp: UInt64) -> Void)?
 
     /// Keys acted on through system hotkeys (`HotKeyCenter`) — the tap leaves
     /// them alone entirely.
@@ -114,7 +115,7 @@ final class KeystrokeMonitor {
             if length > 0 { chars = String(utf16CodeUnits: buffer, count: length) }
         }
 
-        onEdit?(chars, isDeletion, keyCode)
+        onEdit?(chars, isDeletion, keyCode, event.timestamp)
         return Unmanaged.passUnretained(event)
     }
 }

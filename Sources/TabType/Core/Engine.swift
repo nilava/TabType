@@ -63,23 +63,37 @@ final class Engine {
     private var lastKeystrokeAt = Date.distantPast
     /// Caret rect read just before the latest keystroke reached the app.
     private var caretAnchor: CGRect?
-    /// TabType's own copy of the text before the caret, with keystrokes applied
-    /// as they're typed (Cotypist's pending edits): predictions start from it at
-    /// once instead of waiting for the app to publish each keystroke over AX.
-    /// `axBaseline` is the last text the app itself reported; while AX still
-    /// shows it, the app is lagging and the local copy is the truth. Any other
-    /// AX text means the app caught up — or changed something (autocorrect, an
-    /// input method) — and replaces the copy.
-    private var expectedInput: String?
-    private var axBaseline: String?
-    /// Where the caret should be (UTF-16 offset) once the app has applied every
-    /// pending keystroke: placement is ready when the app's caret gets there.
-    private var expectedCaret: Int?
+    /// TabType's own view of the text before the caret (Cotypist's pending
+    /// edits): the last AX read of the field plus the keystrokes the app hasn't
+    /// shown yet, so prediction starts at once instead of waiting for the app.
+    /// Keystrokes carry their event time: one typed before a read may already be
+    /// in it (an observing tap can hear about a key after the app showed it), so
+    /// a read confirms queued keys by CONTENT, and a key older than the latest
+    /// read is never added on top of it — nothing is counted twice.
+    private struct FieldRead { var text: String; var caret: Int?; var at: UInt64 }
+    private struct PendingKey { var chars: String; var deletion: Bool; var at: UInt64 }
+    private var fieldRead: FieldRead?
+    private var pendingKeys: [PendingKey] = []
     private var expectedLimit = AppSettings.inputContextChars
+
+    /// The text before the caret with every pending keystroke applied.
+    private var expectedInput: String? {
+        fieldRead.map { Self.applying(pendingKeys, to: $0.text, limit: expectedLimit) }
+    }
+    /// Where the caret should be (UTF-16 offset) once the app has shown every
+    /// pending keystroke: placement is ready when the app's caret gets there.
+    private var expectedCaret: Int? {
+        guard let caret = fieldRead?.caret else { return nil }
+        return pendingKeys.reduce(caret) { $0 + ($1.deletion ? -1 : $1.chars.utf16.count) }
+    }
 
     /// Notifications from the focused field; a pending placement re-checks the
     /// caret the moment one arrives (polling stays as the backstop).
     private var fieldObserver: AXFieldObserver?
+    /// Caret rect the inline ghost was last painted at.
+    private var lastPaintedCaret: CGRect?
+    /// The element focus last moved to (see `installFocusObserver`).
+    private var observedFocus: AXUIElement?
     private var pendingPlacement: (() -> Void)?
     /// Screen/transcript capture scheduled for the next typing pause.
     private var pauseCapture: DispatchWorkItem?
@@ -350,9 +364,16 @@ final class Engine {
     /// warm the context for the NEW field before the first keystroke lands there.
     private func installFocusObserver(pid: pid_t) {
         guard pid != 0 else { focusObserver = nil; return }
+        observedFocus = AccessibilityBridge.focusedElement()
         focusObserver = AXFocusObserver(pid: pid) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                // Chromium re-announces focus on the SAME field (e.g. after a
+                // paste insert) — that isn't a focus change, and treating it as
+                // one dropped a Tab-protected remainder mid-accept.
+                let now = AccessibilityBridge.focusedElement()
+                if let now, let before = self.observedFocus, CFEqual(now, before) { return }
+                self.observedFocus = now
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
                 self.dropPendingEdits()
@@ -611,9 +632,10 @@ final class Engine {
         }
         // The tap holds the key until it returns: read only what must be read
         // BEFORE the app sees the key, then let it through and do the rest.
-        monitor.onEdit = { chars, isDeletion, _ in
+        monitor.onEdit = { chars, isDeletion, _, timestamp in
             MainActor.assumeIsolated {
                 self.beforeEditDelivered()
+                self.recordKeystroke(chars: chars, isDeletion: isDeletion, at: timestamp)
                 DispatchQueue.main.async { self.handleEdit(chars: chars, isDeletion: isDeletion) }
             }
         }
@@ -852,8 +874,6 @@ final class Engine {
             }
         }
 
-        applyPendingEdit(chars: chars, isDeletion: isDeletion)
-
         // Maintain fallback buffer.
         if isDeletion {
             if !buffer.isEmpty { buffer.removeLast() }
@@ -962,7 +982,12 @@ final class Engine {
             let elapsed = Date().timeIntervalSince(keystrokeAt)
             var ready = elapsed >= deadline
             // The app's caret reached where our pending keystrokes put it.
-            if !ready, earlyOnCaretMove, let caretRect, let expected = expectedCaret,
+            // Re-placing a ghost already on screen: the caret's bounds must have
+            // left where it was painted too (WebKit updates the caret index
+            // before its bounds, and the stale rect would paint over the insert).
+            let boundsMoved = isNewSuggestion || caretRect.map { rect in
+                lastPaintedCaret.map { Self.caretMoved(rect, from: $0) } ?? true } == true
+            if !ready, earlyOnCaretMove, let caretRect, let expected = expectedCaret, boundsMoved,
                let element, AccessibilityBridge.caretOffset(of: element) == expected {
                 ready = !policy.laggyCaret || previous.map { Self.sameCaret($0, caretRect) } == true
                 previous = caretRect
@@ -987,54 +1012,63 @@ final class Engine {
         attempt()
     }
 
-    /// Apply a keystroke to the local copy of the field (see `expectedInput`).
-    private func applyPendingEdit(chars: String, isDeletion: Bool) {
-        guard var text = expectedInput else { expectedCaret = nil; return }
-        if isDeletion {
-            guard !text.isEmpty else { expectedInput = nil; expectedCaret = nil; return }
-            if let caret = expectedCaret { expectedCaret = caret - (text.last.map { String($0).utf16.count } ?? 1) }
-            text.removeLast()
-        } else {
+    /// A keystroke (or our own insert) reaching the field at `at` (uptime ns).
+    private func recordKeystroke(chars: String, isDeletion: Bool, at: UInt64) {
+        guard let read = fieldRead else { return }
+        guard at > read.at else { return }   // the latest read may already contain it
+        if !isDeletion {
             // Only plain text keeps the copy exact; anything else re-reads AX.
-            guard !chars.isEmpty, chars.allSatisfy({ !$0.isNewline || $0 == "\n" }),
-                  !chars.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" })
-            else { expectedInput = nil; expectedCaret = nil; return }
-            text += chars.replacingOccurrences(of: "\r", with: "\n")
-            if let caret = expectedCaret { expectedCaret = caret + chars.utf16.count }
-            if text.count > expectedLimit { text = String(text.suffix(expectedLimit)) }
+            guard !chars.isEmpty,
+                  !chars.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\r" })
+            else { dropPendingEdits(); return }
         }
-        expectedInput = text
+        pendingKeys.append(PendingKey(chars: chars.replacingOccurrences(of: "\r", with: "\n"),
+                                      deletion: isDeletion, at: at))
     }
 
-    /// The text before the caret as it is now: the app's AX text, unless the
-    /// app is still showing what it showed before our pending keystrokes.
-    private func reconcile(axInput: String) -> String {
-        guard let expected = expectedInput, let baseline = axBaseline else {
-            expectedInput = axInput
-            axBaseline = axInput
-            expectedCaret = AccessibilityBridge.focusedElement().flatMap(AccessibilityBridge.caretOffset)
-            return axInput
+    nonisolated static func uptimeNow() -> UInt64 { clock_gettime_nsec_np(CLOCK_UPTIME_RAW) }
+
+    private static func applying(_ keys: [PendingKey], to text: String, limit: Int) -> String {
+        var t = text
+        for k in keys {
+            if k.deletion { if !t.isEmpty { t.removeLast() } } else { t += k.chars }
         }
-        if axInput == baseline, expected != baseline { return expected }   // app lagging
-        // Partly caught up (two keys typed, one shown): still behind the copy.
-        if axInput != expected, expected.hasPrefix(axInput), axInput.hasPrefix(baseline) {
-            axBaseline = axInput
-            return expected
+        return t.count > limit ? String(t.suffix(limit)) : t
+    }
+
+    /// A fresh AX read of the text before the caret, taken at `readAt`: confirm
+    /// the queued keystrokes it already shows and return the text with the rest.
+    private func reconcile(axInput: String, readAt: UInt64) -> String {
+        let caret = AccessibilityBridge.focusedElement().flatMap(AccessibilityBridge.caretOffset)
+        if let read = fieldRead {
+            // Keys typed before the read may or may not be in it: find how many
+            // of them (in order) turn the previous read into this one.
+            let candidates = pendingKeys.prefix { $0.at < readAt }
+            var matched: Int? = read.text == axInput ? 0 : nil
+            var text = read.text
+            for (i, key) in candidates.enumerated() {
+                text = Self.applying([key], to: text, limit: expectedLimit)
+                if text == axInput { matched = i + 1 }
+            }
+            if let matched {
+                pendingKeys.removeFirst(matched)
+            } else {
+                if !pendingKeys.isEmpty {
+                    Log.shared.debug("pending edits: field differs from the local copy — re-reading it")
+                }
+                pendingKeys.removeAll { $0.at < readAt }
+            }
+        } else {
+            pendingKeys.removeAll()
         }
-        if axInput != expected {
-            Log.shared.debug("pending edits: field differs from the local copy — re-reading it")
-        }
-        expectedInput = axInput
-        axBaseline = axInput
-        expectedCaret = AccessibilityBridge.focusedElement().flatMap(AccessibilityBridge.caretOffset)
-        return axInput
+        fieldRead = FieldRead(text: axInput, caret: caret, at: readAt)
+        return expectedInput ?? axInput
     }
 
     /// Forget the local copy (focus/caret moved, text changed elsewhere).
     private func dropPendingEdits() {
-        expectedInput = nil
-        axBaseline = nil
-        expectedCaret = nil
+        fieldRead = nil
+        pendingKeys.removeAll()
     }
 
     /// Watch the focused field's own notifications (re-created when focus moves).
@@ -1237,12 +1271,13 @@ final class Engine {
         let screenContext = screenContextEnabled
             ? ScreenContextProvider.shared.contextText(for: bundleId, cap: screenCap, host: host) : ""
         expectedLimit = policy.inputContextChars ?? AppSettings.inputContextChars
+        let readAt = Engine.uptimeNow()
         var ctx = ContextReader.gather(
             fallbackBuffer: buffer,
             screenContext: screenContext,
             inputChars: expectedLimit,
             wantsDocumentHead: policy.documentProfile)
-        let current = reconcile(axInput: ctx.input)
+        let current = reconcile(axInput: ctx.input, readAt: readAt)
         if current != ctx.input {
             ctx.input = current
             ctx.dedupKey += "|pending|" + current
@@ -1480,9 +1515,10 @@ final class Engine {
         // The field may have changed while the model was generating (more typing,
         // deletions, Cmd+A wipe) — a result for stale input must never be shown.
         // Same guard the late-coalesced path has always had.
+        let readAt = Engine.uptimeNow()
         var fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
                                          inputChars: expectedLimit)
-        fresh.input = reconcile(axInput: fresh.input)
+        fresh.input = reconcile(axInput: fresh.input, readAt: readAt)
         if policy.terminalAgentOnly { fresh.input = TerminalPrompt.input(before: fresh.input) ?? "" }
         // Splice: the user typed ahead, and what they typed is the start of this
         // suggestion — show the rest of it for the text as it is now.
@@ -1642,6 +1678,7 @@ final class Engine {
                     // No room for even a couple of characters inline — HUD pill.
                     self.overlay.showHUD(text: suggestion, windowRect: windowRect)
                 }
+                self.lastPaintedCaret = rect
                 Log.shared.debug("ghost painted \(Int(Date().timeIntervalSince(self.lastKeystrokeAt) * 1000))ms after the last edit")
             }
             /// AX-styled baseline: the caret-box estimate plus this field's measured
@@ -1820,7 +1857,11 @@ final class Engine {
             includeTrailingPunctuation: settings.includeTrailingPunctuation,
             includeTrailingSpace: settings.includeTrailingSpace)
         let accepted = session.text ?? ""
-        guard let (toInsert, remainder) = session.accept(whole: whole, options: options) else { return false }
+        guard let (toInsert, remainder) = session.accept(whole: whole, options: options) else {
+            Log.shared.debug("accept: nothing to accept")
+            return false
+        }
+        Log.shared.debug("accept: \"\(toInsert)\" (rest \"\(remainder)\")")
 
         // Accepting the last word: the lookahead (when ready) is what comes next.
         var next: String?
@@ -1867,7 +1908,7 @@ final class Engine {
             // insertion like typing, or the remainder ghost paints at the
             // pre-insert caret and overlaps the inserted text.
             self.markEdit()
-            self.applyPendingEdit(chars: toInsert, isDeletion: false)
+            self.recordKeystroke(chars: toInsert, isDeletion: false, at: Engine.uptimeNow())
             TextInserter.insert(toInsert, strategy: strategy)
             if let next {
                 // Re-anchor at the settled caret — unless more Tabs already moved on.
@@ -1933,7 +1974,8 @@ final class Engine {
 
     /// `keepGeneration`: typing ahead — let a running generation finish so its
     /// result can be spliced (see `inFlight`).
-    private func clearSuggestion(keepGeneration: Bool = false) {
+    private func clearSuggestion(keepGeneration: Bool = false, caller: String = #function, line: Int = #line) {
+        if currentSuggestion != nil { Log.shared.debug("suggestion cleared (\(caller):\(line))") }
         debounceWork?.cancel()
         scheduleToken += 1   // invalidate any in-flight host-publish poll
         if !keepGeneration { router.cancelInFlight() }

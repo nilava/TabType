@@ -28,6 +28,7 @@ final class HotKeyCenter {
     func setActive(_ bindings: Set<KeyBinding>) {
         installHandlerIfNeeded()
         for (binding, entry) in registered where !bindings.contains(binding) {
+            Log.shared.debug("hotkey: released \(binding.displayString)")
             UnregisterEventHotKey(entry.ref)
             registered[binding] = nil
             byID[entry.id] = nil
@@ -42,6 +43,9 @@ final class HotKeyCenter {
             if status == noErr, let ref {
                 registered[binding] = (ref, id)
                 byID[id] = binding
+                Log.shared.debug("hotkey: registered \(binding.displayString)")
+            } else {
+                Log.shared.info("hotkey: could not register \(binding.displayString) (status \(status))")
             }
         }
     }
@@ -65,7 +69,10 @@ final class HotKeyCenter {
             guard status == noErr else { return status }
             MainActor.assumeIsolated {
                 let center = HotKeyCenter.shared
-                if let binding = center.byID[hotKeyID.id] { center.onPress?(binding) }
+                if let binding = center.byID[hotKeyID.id] {
+                    Log.shared.debug("hotkey: pressed \(binding.displayString)")
+                    center.onPress?(binding)
+                }
             }
             return noErr
         }

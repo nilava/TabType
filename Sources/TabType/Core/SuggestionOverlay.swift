@@ -82,6 +82,7 @@ final class SuggestionOverlay {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.hidesOnDeactivate = false
+        panel.animationBehavior = .none   // appear instantly, no fade-in
         // Never part of anyone's AX tree (our own hit-tests included).
         panel.setAccessibilityElement(false)
 
