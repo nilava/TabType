@@ -32,7 +32,8 @@ let package = Package(
         .target(
             name: "TabTypeKit",
             dependencies: ["llama"],
-            path: "Sources/TabTypeKit"
+            path: "Sources/TabTypeKit",
+            resources: [.process("Catalog/models.json")]
         ),
         .executableTarget(
             name: "TabTypeEval",

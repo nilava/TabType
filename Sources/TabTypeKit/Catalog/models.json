@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "qwen3-0.6b-base",
+      "name": "Qwen 3 0.6B",
+      "summary": "Smallest and fastest. Good word completion on any Mac.",
+      "template": "base",
+      "url": "https://huggingface.co/mradermacher/Qwen3-0.6B-Base-i1-GGUF/resolve/main/Qwen3-0.6B-Base.i1-Q4_K_M.gguf",
+      "fileName": "Qwen3-0.6B-Base.i1-Q4_K_M.gguf",
+      "sizeBytes": 396705184,
+      "sha256": "279e7f2d04f7e225eef1ff469897340e18a53ed500247b8c7a1acf13e9a04446",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 8,
+      "showThreshold": 0.25,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "qwen3-1.7b-base",
+      "name": "Qwen 3 1.7B",
+      "summary": "Fast and accurate. Recommended for Macs with 8 GB.",
+      "template": "base",
+      "url": "https://huggingface.co/mradermacher/Qwen3-1.7B-Base-i1-GGUF/resolve/main/Qwen3-1.7B-Base.i1-Q4_K_M.gguf",
+      "fileName": "Qwen3-1.7B-Base.i1-Q4_K_M.gguf",
+      "sizeBytes": 1107409248,
+      "sha256": "b3aac3227132b11e0ea8c818569f27c053ebde24d0b8530f3bd476e7ff33ee20",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 8,
+      "showThreshold": 0.2,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "qwen3-4b-base",
+      "name": "Qwen 3 4B",
+      "summary": "Best suggestions. Recommended for Macs with 16 GB or more.",
+      "template": "base",
+      "url": "https://huggingface.co/mradermacher/Qwen3-4B-Base-i1-GGUF/resolve/main/Qwen3-4B-Base.i1-Q4_K_M.gguf",
+      "fileName": "Qwen3-4B-Base.i1-Q4_K_M.gguf",
+      "sizeBytes": 2497280960,
+      "sha256": "ff17d19ad5f8c7ddc205d1b8c6fadc360449f06a499440dce8c81db6302f19ac",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 16,
+      "showThreshold": 0.2,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "qwen3-4b-instruct",
+      "name": "Qwen 3 4B Instruct",
+      "summary": "Instruction-tuned variant; follows custom instructions more closely.",
+      "template": "chatml",
+      "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "fileName": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "sizeBytes": 2497281120,
+      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 16,
+      "showThreshold": 0.6,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "gemma-4-e2b-base",
+      "name": "Gemma 4 E2B",
+      "summary": "Balanced quality and speed.",
+      "template": "base",
+      "url": "https://huggingface.co/mradermacher/gemma-4-E2B-i1-GGUF/resolve/main/gemma-4-E2B.i1-Q4_K_M.gguf",
+      "fileName": "gemma-4-E2B.i1-Q4_K_M.gguf",
+      "sizeBytes": 3427862240,
+      "sha256": "3cc0e9c2b4bbffea7f3f6cfe1ffd1591f4dafe02c43f78952f1142a24172df65",
+      "license": "Apache-2.0",
+      "licenseURL": "https://ai.google.dev/gemma/docs/gemma_4_license",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 16,
+      "showThreshold": 0.2,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "gemma-4-e2b-it",
+      "name": "Gemma 4 E2B Instruct",
+      "summary": "Instruction-tuned Gemma 4 E2B.",
+      "template": "gemma4",
+      "url": "https://huggingface.co/mradermacher/gemma-4-E2B-it-i1-GGUF/resolve/main/gemma-4-E2B-it.i1-Q4_K_M.gguf",
+      "fileName": "gemma-4-E2B-it.i1-Q4_K_M.gguf",
+      "sizeBytes": 3427878560,
+      "sha256": "8b732c669bf021855a7e6eecf704462170b26cc0aac0f973d8482ae4f98acce4",
+      "license": "Apache-2.0",
+      "licenseURL": "https://ai.google.dev/gemma/docs/gemma_4_license",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 16,
+      "showThreshold": 0.75,
+      "extensionThreshold": 0.3
+    },
+    {
+      "id": "gemma-4-e4b-base",
+      "name": "Gemma 4 E4B",
+      "summary": "Larger Gemma model; strong for languages other than English.",
+      "template": "base",
+      "url": "https://huggingface.co/mradermacher/gemma-4-E4B-i1-GGUF/resolve/main/gemma-4-E4B.i1-Q4_K_M.gguf",
+      "fileName": "gemma-4-E4B.i1-Q4_K_M.gguf",
+      "sizeBytes": 5335274240,
+      "sha256": "687f4cce47eac6ccfc595fd9517215fb964e5e5be17d4774b25b8add401d6d3c",
+      "license": "Apache-2.0",
+      "licenseURL": "https://ai.google.dev/gemma/docs/gemma_4_license",
+      "requiresTermsNotice": false,
+      "minimumRAMGB": 24,
+      "showThreshold": 0.25,
+      "extensionThreshold": 0.3
+    }
+  ],
+  "recommendations": [
+    {
+      "minimumRAMGB": 8,
+      "modelID": "qwen3-1.7b-base"
+    },
+    {
+      "minimumRAMGB": 16,
+      "modelID": "qwen3-4b-base"
+    }
+  ]
+}

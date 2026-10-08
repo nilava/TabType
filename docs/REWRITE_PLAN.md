@@ -263,14 +263,15 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [ ] Synonyms via masked re-decode (moved to Phase 6 with the picker UI)
 - [x] Tuned defaults on seed-v1 (Gemma 4 E2B): extension 0.3, ≤4 words, show ≥0.2 — re-tune per model in Phase 3
 
-### Phase 3 — Models & prompting
-- [ ] `ModelTemplate` for base, ChatML/Qwen3 (thinking off), Gemma, Llama 3, Phi
-- [ ] `PromptAssembler` with stable-first ordering + per-section budgets
-- [ ] Assistant-prefill path for instruct models; raw-continuation path for base models
-- [ ] `catalog/models.json` (hosted in repo) + bundled fallback; RAM tiers; quant parsing
-- [ ] GGUF downloader + custom models folder; memory/disk warnings; Gemma terms notice
-- [ ] "Recommended model update" notice when catalog recommendation changes
-- [ ] Eval: base vs instruct per model family; pick defaults per RAM tier
+### Phase 3 — Models & prompting ✅ (kit-level; UI in Phase 6)
+- [x] `ModelTemplate`: base, ChatML, ChatML no-think (Qwen3 hybrid), Gemma 2/3, Gemma 4 (`<|turn>`), Llama 3, Phi; detection for custom GGUFs (name first — base GGUFs embed chat templates too)
+- [x] `PromptAssembler`: stable-first ordering, per-section budgets, reserved-marker stripping
+- [x] Assistant-prefill path for instruct models; author-labelled continuation for base models
+- [x] Catalog (`Sources/TabTypeKit/Catalog/models.json`, refreshed from `main`, cached, bundled fallback); RAM tiers; per-model tuned thresholds; GGUF name/quant parsing
+- [x] Resumable, SHA-256-verified GGUF downloader; `ModelStore` with custom-models folder; memory/disk fit checks. Gemma 4 is Apache-2.0, so no Gemma-terms gate is needed (`requiresTermsNotice` stays for future models)
+- [x] `RecommendationTracker` for the one-time "recommended model changed" notice (UI in Phase 6)
+- [x] Eval: base beats instruct at equal noise on both families; 8 GB → Qwen3-1.7B base, 16 GB+ → Qwen3-4B base (see `eval/README.md`)
+- [ ] Larger tier candidate (Qwen3-8B base) and a multilingual case set before trusting tiers for non-English writers
 
 ### Phase 4 — Context
 - [ ] `FieldSnapshot` (AX + text markers + hidden-input editor detection)

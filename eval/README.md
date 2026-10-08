@@ -49,6 +49,32 @@ Tune the show threshold from one ungated decoder run:
 .build/release/tabtype-eval sweep ungated.json
 ```
 
+## Phase 3 — model and prompt selection (seed-v1, 192 cases)
+
+Each model runs the v2 decoder with its catalog prompt template. The show threshold
+is tuned per model: the highest accepted chars/case with wrong-shows ≤ 25% of cases.
+
+| Model | Size | Prompt | Threshold | Recall | Precision | Wrong-show | Chars/case | p50 |
+|---|---|---|---|---|---|---|---|---|
+| **Qwen3-4B base** | 2.5 GB | base | 0.20 | **56.2%** | 70.6% | 23.4% | **3.49** | 104 ms |
+| **Qwen3-1.7B base** | 1.1 GB | base | 0.20 | 52.1% | 69.4% | 22.9% | 3.07 | 44 ms |
+| Gemma 4 E2B base | 3.4 GB | base | 0.20 | 50.0% | 67.1% | 24.5% | 2.93 | 76 ms |
+| Gemma 4 E4B base | 5.3 GB | base | 0.25 | 47.4% | 74.0% | 16.7% | 2.86 | 117 ms |
+| Qwen3-4B Instruct 2507 | 2.5 GB | chat (prefill) | 0.60 | 44.8% | 64.2% | 25.0% | 3.22 | 124 ms |
+| Gemma 4 E2B Instruct | 3.4 GB | chat (prefill) | 0.75 | 43.8% | 64.1% | 24.5% | 3.02 | 82 ms |
+| Qwen3-0.6B base | 0.4 GB | base | 0.25 | 38.0% | 62.4% | 22.9% | 1.95 | 23 ms |
+| *v1 (MLX, Qwen3-4B Instruct)* | 2.3 GB | v1 | — | 37.0% | 37.8% | 60.9% | 2.19 | 296 ms |
+
+Findings:
+- **Base models win.** Instruct models are overconfident (peaky probabilities), so at
+  equal noise they must be gated much harder and lose ~10 points of recall. They stay
+  in the catalog for people who want instruction-following, with their own thresholds.
+- The author-labelled base prompt (`Name: reply` under the conversation) beat the
+  Phase 2 generic prompt by 1–2 points on every model (within noise on this set).
+- Bigger is not automatically better: Gemma 4 E4B trails Qwen3-4B here. The set is
+  English-only, so multilingual strengths are untested.
+- Recommendations: 8 GB → Qwen3-1.7B base; 16 GB+ → Qwen3-4B base.
+
 ## Results (seed-v1, 192 cases)
 
 | | v1 MLX · Qwen3-4B-Instruct | v2 decoder · Gemma 4 E2B base | v2 decoder · Qwen3-0.6B base |

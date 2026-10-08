@@ -5,7 +5,11 @@
 //   tabtype-eval run --model <file.gguf> --cases <cases.jsonl> [--backend decoder|greedy]
 //                    [--threshold P] [--max-words N] [--extend P] [--out run.json] [--baseline run.json] [--limit N]
 //   tabtype-eval report <run.json> [--baseline run.json]
+//                    [--template legacy|base|chatml|chatml-nothink|gemma|llama3|phi] [--author "Name"]
 //   tabtype-eval sweep <run.json>            (confidence-threshold tradeoff of a decoder run)
+//   tabtype-eval prompt --template <name> --cases <cases.jsonl> [--index N]   (print an assembled prompt)
+//   tabtype-eval catalog                     (models in the bundled catalog and how they fit this Mac)
+//   tabtype-eval download <model-id> [--dir path]
 //
 // The v1 (MLX) baseline is produced by the app binary itself:
 //   TabType.app/Contents/MacOS/TabType --eval <cases.jsonl> --out <run.json>
@@ -20,7 +24,7 @@ func fail(_ message: String) -> Never {
 
 let allArguments = Array(CommandLine.arguments.dropFirst())
 guard let command = allArguments.first else {
-    fail("usage: tabtype-eval {make-cases|smoke|run|report|sweep} …  (see Sources/TabTypeEval/main.swift)")
+    fail("usage: tabtype-eval {make-cases|smoke|run|report|sweep|prompt|catalog|download} …  (see Sources/TabTypeEval/main.swift)")
 }
 nonisolated(unsafe) let arguments = Array(allArguments.dropFirst())
 
@@ -95,8 +99,13 @@ case "run":
         if let n = option("--max-words").flatMap(Int.init) { options.maxWords = n }
         if let p = option("--extend").flatMap(Double.init) { options.extensionThreshold = p }
         if let k = option("--candidates").flatMap(Int.init) { options.candidates = k }
+        let templateName = option("--template") ?? "legacy"
+        let template = templateName == "legacy" ? nil : ModelTemplate.named(templateName)
+        if templateName != "legacy", template == nil { fail("unknown template \(templateName)") }
         backend = DecoderBackend(runtime: runtime, options: options,
-                                 threshold: option("--threshold").flatMap(Double.init) ?? 0)
+                                 threshold: option("--threshold").flatMap(Double.init) ?? 0,
+                                 template: template, templateName: templateName,
+                                 authorName: option("--author") ?? "Nilava Chowdhury")
     case let other:
         fail("unknown backend \(other)")
     }
@@ -124,6 +133,36 @@ case "sweep":
         print(String(format: "  %4.2f      %5.2f     %5.1f%%   %5.1f%%   %5.1f%%   %5.1f%%", t,
                      s.acceptedCharsPerCase, s.recall * 100, s.precision * 100, s.showRate * 100, s.wrongShowRate * 100))
     }
+
+case "prompt":
+    guard let casesPath = option("--cases"), let name = option("--template"),
+          let template = ModelTemplate.named(name) else { fail("prompt needs --cases and a valid --template") }
+    let cases = try JSONL.read(EvalCase.self, from: url(casesPath))
+    let c = cases[min(option("--index").flatMap(Int.init) ?? 0, cases.count - 1)]
+    print(PromptAssembler(template: template).assemble(c.promptContext(authorName: option("--author") ?? "Nilava Chowdhury")))
+
+case "catalog":
+    let catalog = try ModelCatalog.bundled()
+    let store = ModelStore()
+    let ram = Int64(ProcessInfo.processInfo.physicalMemory)
+    let ramGB = Int(ram / 1_073_741_824)
+    print("This Mac: \(ramGB) GB RAM · recommended: \(catalog.recommendedEntry(forRAMGB: ramGB)?.id ?? "none")")
+    for e in catalog.models {
+        let fit = ModelFit.check(modelBytes: e.sizeBytes, physicalMemoryBytes: ram,
+                                 freeDiskBytes: store.freeDiskBytes(), alreadyDownloaded: store.isInstalled(e))
+        print("  \(e.id.padding(toLength: 20, withPad: " ", startingAt: 0)) \(String(format: "%5.2f", Double(e.sizeBytes) / 1e9)) GB  \(e.template.padding(toLength: 14, withPad: " ", startingAt: 0)) \(store.isInstalled(e) ? "installed" : "—")  \(fit)")
+    }
+
+case "download":
+    guard let id = positional() else { fail("download needs a model id (see `catalog`)") }
+    let catalog = try ModelCatalog.bundled()
+    guard let entry = catalog.entry(id: id) else { fail("unknown model \(id)") }
+    let store = option("--dir").map { ModelStore(directory: url($0)) } ?? ModelStore()
+    let path = try await ModelDownloader().download(entry, into: store) { received, total in
+        print(String(format: "  %.0f%%  %.2f / %.2f GB", Double(received) / Double(total) * 100,
+                     Double(received) / 1e9, Double(total) / 1e9))
+    }
+    print("installed → \(path.path)")
 
 default:
     fail("unknown command \(command)")

@@ -14,28 +14,45 @@ enum EvalPrompt {
     }
 }
 
+extension EvalCase {
+    /// The writing situation as the app would describe it to the prompt assembler.
+    func promptContext(authorName: String?) -> PromptContext {
+        let isConversation = category == "chat" && context.contains(": ")
+        return PromptContext(typedText: prefix, appName: app, authorName: authorName,
+                             screenText: context.isEmpty ? nil : context, isConversation: isConversation)
+    }
+}
+
 /// v2 decoder: token healing, parallel candidates, confidence scoring, phrase
 /// extension. Shows the suggestion only when confidence ≥ `threshold`; records the
 /// confidence either way so `sweep` can retune the threshold offline.
 @MainActor
 final class DecoderBackend: CompletionBackend {
-    let name = "llama-decoder"
+    let name: String
     let model: String
     private let runtime: LlamaRuntime
     private let options: DecoderOptions
     private let threshold: Double
+    /// nil: the Phase 0/2 document prompt (`EvalPrompt`), kept for comparison.
+    private let assembler: PromptAssembler?
+    private let authorName: String?
     private(set) var lastConfidence: Double?
 
-    init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double) {
+    init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
+         template: ModelTemplate?, templateName: String, authorName: String?) {
         self.runtime = runtime
         self.options = options
         self.threshold = threshold
+        self.assembler = template.map { PromptAssembler(template: $0) }
+        self.authorName = authorName
+        name = "llama-decoder/\(templateName)"
         model = URL(fileURLWithPath: runtime.modelPath).deletingPathExtension().lastPathComponent
     }
 
     func complete(_ evalCase: EvalCase) async throws -> String? {
-        let result = try CompletionDecoder.complete(EvalPrompt.document(for: evalCase),
-                                                    model: runtime, options: options)
+        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName))
+            ?? EvalPrompt.document(for: evalCase)
+        let result = try CompletionDecoder.complete(text, model: runtime, options: options)
         lastConfidence = result?.confidence ?? 0
         guard let result, result.confidence >= threshold else { return nil }
         return result.text
