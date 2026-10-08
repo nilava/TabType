@@ -662,6 +662,17 @@ final class Engine {
             MainActor.assumeIsolated { self.isHotKeyManaged(keyCode: keyCode, flags: flags) }
         }
         HotKeyCenter.shared.onPress = { binding in self.handleHotKey(binding) }
+        HotKeyCenter.shared.onConflict = { binding in
+            // Say so once instead of failing silently: without its hotkey TabType
+            // can't act on that key.
+            let window = AccessibilityBridge.focusedElement().flatMap { ContextReader.windowRect(of: $0) }
+            self.overlay.showHUD(text: "\(binding.displayString) is used by another app's shortcut — choose another key in TabType Settings ▸ Shortcuts",
+                                 windowRect: window)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                guard let self, self.currentSuggestion == nil else { return }
+                self.overlay.hide()
+            }
+        }
     }
 
     // MARK: - Hotkeys

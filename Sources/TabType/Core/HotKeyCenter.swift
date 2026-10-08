@@ -11,6 +11,9 @@ final class HotKeyCenter {
 
     /// Called on the main thread when a registered binding is pressed.
     var onPress: ((KeyBinding) -> Void)?
+    /// Called once per binding that couldn't be registered (another app owns it).
+    var onConflict: ((KeyBinding) -> Void)?
+    private var reportedConflicts: Set<KeyBinding> = []
 
     private var registered: [KeyBinding: (ref: EventHotKeyRef, id: UInt32)] = [:]
     private var byID: [UInt32: KeyBinding] = [:]
@@ -46,6 +49,7 @@ final class HotKeyCenter {
                 Log.shared.debug("hotkey: registered \(binding.displayString)")
             } else {
                 Log.shared.info("hotkey: could not register \(binding.displayString) (status \(status))")
+                if reportedConflicts.insert(binding).inserted { onConflict?(binding) }
             }
         }
     }
