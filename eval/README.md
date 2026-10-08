@@ -18,9 +18,8 @@ eval/results/  run outputs (per-case suggestions + summary)
 .build/release/tabtype-eval run --model <file.gguf> --cases eval/cases/seed-v1.jsonl \
     --baseline eval/results/phase0-v1-mlx-qwen3-4b.json
 
-# v1 (MLX) baseline — runs the real app pipeline headlessly
-./Scripts/build.sh app
-dist/TabType.app/Contents/MacOS/TabType --eval eval/cases/seed-v1.jsonl --out eval/results/v1.json
+# (The v1 MLX baseline in eval/results/ was recorded with the app's old --eval mode,
+#  removed in the Phase 8 cutover; it stays as a frozen reference.)
 
 .build/release/tabtype-eval report <run.json> --baseline <other.json>
 ```

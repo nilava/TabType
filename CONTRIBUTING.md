@@ -14,13 +14,12 @@ Thanks for helping! TabType is an **alpha** open-source project and contribution
 
 ```sh
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-xcodebuild -downloadComponent MetalToolchain          # one-time
 ./Scripts/setup-signing.sh                            # one-time, stable local identity
-./Scripts/build.sh app && open dist/TabType.app
+CONFIG=Release ./Scripts/build.sh app && open dist/TabType.app
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-`swift build` compiles but can't run the app (MLX Metal kernels need `xcodebuild`). Use `Scripts/build.sh app`.
+`swift build` compiles, but use `Scripts/build.sh app` to get a signed `.app` with its resources. Debug builds still compile `TabTypeKit` with `-O`, because the decoder is too slow unoptimised. Use the eval harness (`tabtype-eval`, see [eval/README.md](eval/README.md)) to measure any change to prompting or decoding before and after.
 
 ## Where things live
 
@@ -28,10 +27,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 |---|---|
 | Keystroke capture + orchestration | `Core/Engine.swift`, `Core/KeystrokeMonitor.swift` |
 | Context gathering | `Core/ContextReader.swift`, `Core/ScreenContextProvider.swift`, `Core/TranscriptExtractor.swift` |
-| Prompt assembly | `Core/PromptBuilder.swift`, `Core/CompletionInstructions.swift` |
-| Local inference | `Core/Predictor.swift`, `Core/Engines/`, `Model/` |
-| Rendering | `Core/SuggestionOverlay.swift`, `Core/GhostAppearanceProbe.swift` |
-| Personalization | `Core/PhraseMemory.swift`, `Core/TypingHistoryStore.swift` |
+| Prompt assembly | `TabTypeKit/Prompting/` (`PromptAssembler`, `ModelTemplate`) |
+| Local inference | `TabTypeKit/Inference/` (llama.cpp runtime), `TabTypeKit/Decoding/` (confidence-gated decoder), `Core/Engines/LlamaEngine.swift` |
+| Models | `TabTypeKit/Catalog/` (`models.json`, downloader), `UI/` model settings |
+| Rendering | `Core/SuggestionOverlay.swift`, `Core/FieldFitCache.swift`, `TabTypeKit/Placement/` (font fitting) |
+| Suggestion lifecycle | `TabTypeKit/Session/` (type-through, Tab accept) |
+| Personalization | `Core/WritingStore.swift`, `TabTypeKit/Personalization/` (suffix index) |
 | Per-app rules | `Core/AppPolicy.swift` |
 | Settings UI | `UI/SettingsView.swift`, `UI/Panes/ExtraPanes.swift` |
 
