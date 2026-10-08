@@ -37,30 +37,6 @@ struct LlamaModelSections: View {
                 .font(.caption)
         }
 
-        Section {
-            Picker("Voice adapter", selection: Binding(
-                get: { models.adapterName ?? "" },
-                set: { models.setAdapter($0.isEmpty ? nil : $0) }
-            )) {
-                Text("None").tag("")
-                ForEach(models.availableAdapters, id: \.self) { Text($0).tag($0) }
-            }
-            if let error = models.adapterError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Text("A LoRA adapter (.gguf) trained for the selected model can tune suggestions toward a particular voice.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Open Adapters Folder") {
-                    try? FileManager.default.createDirectory(at: models.adaptersDirectory, withIntermediateDirectories: true)
-                    NSWorkspace.shared.open(models.adaptersDirectory)
-                }
-            }
-        } header: {
-            Text("Advanced")
-        }
-
         let custom = models.entries.filter { $0.id.hasPrefix("custom:") }
         Section {
             ForEach(custom, id: \.id) { row($0) }

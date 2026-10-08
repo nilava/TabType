@@ -45,7 +45,7 @@ final class LlamaEngine {
             options.hint = Array(hint.text.utf8)
             hintSupport = hint.support
         }
-        let cacheKey = "\(models.loadedID ?? "")|\(models.adapterName ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
+        let cacheKey = "\(models.loadedID ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
         let start = Date()
         let result: TabTypeKit.CompletionResult
         let cached: Bool
@@ -83,7 +83,7 @@ final class LlamaEngine {
         while recentOrder.count > Self.recentCapacity { recent[recentOrder.removeFirst()] = nil }
     }
 
-    /// Forget cached results (model, adapter or settings changed).
+    /// Forget cached results (model or settings changed).
     func clearRecent() {
         recent.removeAll()
         recentOrder.removeAll()

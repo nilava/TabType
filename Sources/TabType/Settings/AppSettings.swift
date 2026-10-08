@@ -17,15 +17,6 @@ final class AppSettings: ObservableObject {
 
     // MARK: General
     @Published var isEnabled: Bool { didSet { defaults.set(isEnabled, forKey: Keys.isEnabled) } }
-    /// Milliseconds to wait after the last keystroke before requesting a prediction.
-    /// Only used when `continuousGeneration` is off (or overridden by battery saving).
-    @Published var debounceMs: Int { didSet { defaults.set(debounceMs, forKey: Keys.debounceMs) } }
-    /// When true (default), fire a prediction attempt almost immediately on every
-    /// keystroke rather than waiting for typing to pause — relies on `Predictor`'s
-    /// coalescing to collapse a fast-typing burst to "the latest request wins,"
-    /// matching Cotypist's continuous-suggestion feel. Uses more CPU while actively
-    /// typing. See `batteryUseDebounce` for the automatic battery fallback.
-    @Published var continuousGeneration: Bool { didSet { defaults.set(continuousGeneration, forKey: Keys.continuousGeneration) } }
     /// Max words shown per suggestion (display cap — the main "length" knob).
     @Published var maxWords: Int { didSet { defaults.set(maxWords, forKey: Keys.maxWords) } }
     /// Accept the whole suggestion on Tab (true) or one word at a time (false).
@@ -57,28 +48,19 @@ final class AppSettings: ObservableObject {
     /// "dismiss" | "pause"
     @Published var escapeBehavior: String { didSet { defaults.set(escapeBehavior, forKey: Keys.escapeBehavior) } }
 
-    // MARK: Battery
-    @Published var batteryOnDemandOnly: Bool { didSet { defaults.set(batteryOnDemandOnly, forKey: Keys.batteryOnDemandOnly) } }
-    @Published var batteryShorterCompletions: Bool { didSet { defaults.set(batteryShorterCompletions, forKey: Keys.batteryShorterCompletions) } }
-    /// When true (default) and on battery in Low Power Mode, steps `continuousGeneration`
-    /// down to debounced mode automatically rather than requiring a manual toggle.
-    @Published var batteryUseDebounce: Bool { didSet { defaults.set(batteryUseDebounce, forKey: Keys.batteryUseDebounce) } }
-
     // MARK: TabType Labs (experimental)
     @Published var autocorrectLanguage: String { didSet { defaults.set(autocorrectLanguage, forKey: Keys.autocorrectLanguage) } }
 
     // MARK: Advanced
-    /// How many characters of preceding context to send to the model.
-    @Published var contextChars: Int { didSet { defaults.set(contextChars, forKey: Keys.contextChars) } }
+    /// Characters of the field before the caret that are read (the prompt
+    /// assembler budgets them further).
+    static let inputContextChars = 2000
     /// Read the surrounding on-screen conversation (chat transcripts) as context.
     @Published var useScreenContext: Bool { didSet { defaults.set(useScreenContext, forKey: Keys.useScreenContext) } }
-    /// How to crop/sort the screen context (e.g. to ignore sidebars in chat apps).
-    @Published var screenCropMode: ScreenCropMode { didSet { defaults.set(screenCropMode.rawValue, forKey: Keys.screenCropMode) } }
     /// Use the clipboard contents as additional context (opt-in; may be sensitive).
     @Published var useClipboardContext: Bool { didSet { defaults.set(useClipboardContext, forKey: Keys.useClipboardContext) } }
     /// Sample the caret area to match ghost-text colour to the field (screenshot-assisted).
     @Published var useScreenshotAppearance: Bool { didSet { defaults.set(useScreenshotAppearance, forKey: Keys.useScreenshotAppearance) } }
-    @Published var textMirroring: Bool { didSet { defaults.set(textMirroring, forKey: Keys.textMirroring) } }
     /// One-time hint flags.
     var didShowGoogleDocsHint: Bool {
         get { defaults.bool(forKey: Keys.didShowGoogleDocsHint) }
@@ -139,26 +121,17 @@ final class AppSettings: ObservableObject {
 
     private init() {
         isEnabled = defaults.object(forKey: Keys.isEnabled) as? Bool ?? true
-        debounceMs = defaults.object(forKey: Keys.debounceMs) as? Int ?? 90
-        continuousGeneration = defaults.object(forKey: Keys.continuousGeneration) as? Bool ?? true
         // The length setting is the source of truth (older builds stored 8 here).
         maxWords = AppSettings.words(for: defaults.string(forKey: Keys.completionLength) ?? "medium")
         acceptWholeLine = defaults.object(forKey: Keys.acceptWholeLine) as? Bool ?? false
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
         // Settings that only the removed v1 (MLX / Apple Intelligence) engine used.
         for key in Keys.retiredV1 { defaults.removeObject(forKey: key) }
-        // How much typed text (before the caret) is read; the prompt assembler
-        // budgets it further.
-        contextChars = defaults.object(forKey: Keys.contextChars) as? Int ?? 1200
         // Default OFF: OCR of the focused window repeatedly bled unrelated on-screen
         // text (plans, docs, code) into suggestions. Opt-in for those who want it.
         useScreenContext = defaults.object(forKey: Keys.useScreenContext) as? Bool ?? false
-        // Caret-cropped is the default: OCR only the region around the caret, which
-        // keeps toolbars/sidebars/unrelated paragraphs out of the prompt.
-        screenCropMode = ScreenCropMode(rawValue: defaults.string(forKey: Keys.screenCropMode) ?? "") ?? .caretCropped
         useClipboardContext = defaults.object(forKey: Keys.useClipboardContext) as? Bool ?? false
         useScreenshotAppearance = defaults.object(forKey: Keys.useScreenshotAppearance) as? Bool ?? true
-        textMirroring = defaults.object(forKey: Keys.textMirroring) as? Bool ?? true
         showMenuBarIcon = defaults.object(forKey: Keys.showMenuBarIcon) as? Bool ?? true
         showAccessoryButton = defaults.object(forKey: Keys.showAccessoryButton) as? Bool ?? false
         disableMacOSPredictiveText = defaults.object(forKey: Keys.disableMacOSPredictiveText) as? Bool ?? false
@@ -186,9 +159,6 @@ final class AppSettings: ObservableObject {
         includeTrailingSpace = defaults.object(forKey: Keys.includeTrailingSpace) as? Bool ?? false
         includeTrailingPunctuation = defaults.object(forKey: Keys.includeTrailingPunctuation) as? Bool ?? false
         escapeBehavior = defaults.string(forKey: Keys.escapeBehavior) ?? "dismiss"
-        batteryOnDemandOnly = defaults.object(forKey: Keys.batteryOnDemandOnly) as? Bool ?? false
-        batteryShorterCompletions = defaults.object(forKey: Keys.batteryShorterCompletions) as? Bool ?? false
-        batteryUseDebounce = defaults.object(forKey: Keys.batteryUseDebounce) as? Bool ?? true
         // Default autocorrect language to the system language if we ship it, else English.
         let sysLang = Locale.current.language.languageCode?.identifier ?? "en"
         autocorrectLanguage = defaults.string(forKey: Keys.autocorrectLanguage)
@@ -221,20 +191,19 @@ final class AppSettings: ObservableObject {
 
     private enum Keys {
         static let isEnabled = "isEnabled"
-        static let debounceMs = "debounceMs"
-        static let continuousGeneration = "continuousGeneration"
         static let maxWords = "maxWords"
         /// Keys of settings that only the removed v1 engine used — deleted on launch.
         static let retiredV1 = ["maxTokens", "engineChoice", "migratedToLlamaEngine", "modelId", "temperature",
-                                "storeInputsWithoutAcceptedCompletions", "personalizeWordChoice"]
+                                "storeInputsWithoutAcceptedCompletions", "personalizeWordChoice",
+                                // Tuning knobs removed in v2.1 (they only got in the way).
+                                "debounceMs", "continuousGeneration", "contextChars", "screenCropMode",
+                                "textMirroring", "batteryOnDemandOnly", "batteryUseDebounce",
+                                "batteryShorterCompletions", "llamaAdapter"]
         static let acceptWholeLine = "acceptWholeLine"
         static let ghostOpacity = "ghostOpacity"
-        static let contextChars = "contextChars"
         static let useScreenContext = "useScreenContext"
-        static let screenCropMode = "screenCropMode"
         static let useClipboardContext = "useClipboardContext"
         static let useScreenshotAppearance = "useScreenshotAppearance"
-        static let textMirroring = "textMirroring"
         static let didShowGoogleDocsHint = "didShowGoogleDocsHint"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let showAccessoryButton = "showAccessoryButton"
@@ -257,9 +226,6 @@ final class AppSettings: ObservableObject {
         static let includeTrailingSpace = "includeTrailingSpace"
         static let includeTrailingPunctuation = "includeTrailingPunctuation"
         static let escapeBehavior = "escapeBehavior"
-        static let batteryOnDemandOnly = "batteryOnDemandOnly"
-        static let batteryUseDebounce = "batteryUseDebounce"
-        static let batteryShorterCompletions = "batteryShorterCompletions"
         static let acceptWordKey = "acceptWordKey"
         static let acceptAllKey = "acceptAllKey"
         static let dismissKey = "dismissKey"

@@ -60,12 +60,9 @@ final class SuggestionOverlay {
 
     private var panel: NSPanel?
     private let label = NSTextField(labelWithString: "")
-    /// The inline ghost (HUD, bubble and mirror keep using `label`).
+    /// The inline ghost (the HUD and bubble use `label`).
     private let ghost = GhostTextView(frame: .zero)
     private let background = NSVisualEffectView()
-    /// Solid backdrop + caret replica for mirror mode (see `showMirror`).
-    private let mirrorBackdrop = NSView()
-    private let caretBar = NSView()
 
     init() {
         let panel = NSPanel(
@@ -99,19 +96,12 @@ final class SuggestionOverlay {
         label.maximumNumberOfLines = 1
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        mirrorBackdrop.wantsLayer = true
-        mirrorBackdrop.layer?.cornerRadius = 3
-        mirrorBackdrop.isHidden = true
-        caretBar.wantsLayer = true
-        caretBar.isHidden = true
 
         let container = NSView()
-        container.addSubview(mirrorBackdrop)
         container.addSubview(background)
         container.addSubview(label)
         container.addSubview(ghost)
         ghost.isHidden = true
-        container.addSubview(caretBar)
         panel.contentView = container
         self.panel = panel
     }
@@ -146,10 +136,6 @@ final class SuggestionOverlay {
                                      baseline: baseline)
         background.isHidden = true
         label.isHidden = true
-        // A previous mirror presentation's opaque backdrop and fake caret must not
-        // linger under a plain inline ghost.
-        mirrorBackdrop.isHidden = true
-        caretBar.isHidden = true
 
         let ghostColor = (color ?? NSColor.secondaryLabelColor).withAlphaComponent(opacity)
         let baselineY = baseline ?? Self.defaultBaseline(caret: caretRect, font: font)
@@ -307,81 +293,10 @@ final class SuggestionOverlay {
         panel.orderFrontRegardless()
     }
 
-    /// Text-mirror mode (Cotypist's `textMirroring`): COVER the tail of the field
-    /// with a backdrop in the field's own background colour, and re-render the
-    /// typed tail + suggestion ourselves as ONE text run — alignment between them
-    /// is exact by construction, and any sub-pixel mismatch with the app's own
-    /// rendering hides under the backdrop. A caret replica separates the runs
-    /// (the app's real caret is covered).
-    ///
-    /// `caretRect` is Quartz/AX top-left global; `baseline` the probed text
-    /// baseline (global y); colours from the appearance probe.
-    func showMirror(typedTail: String, suggestion: String, caretRect: CGRect,
-                    baseline: CGFloat, font: NSFont, textColor: NSColor,
-                    backgroundColor: NSColor, ghostOpacity: Double,
-                    maxRightX: CGFloat?) {
-        guard let panel, !suggestion.isEmpty else { hide(); return }
-        background.isHidden = true
-        label.isHidden = false
-        ghost.isHidden = true
-
-        let ghostColor = textColor.withAlphaComponent(ghostOpacity)
-
-        let attributed = NSMutableAttributedString()
-        attributed.append(NSAttributedString(string: typedTail, attributes: [
-            .font: font, .foregroundColor: textColor,
-        ]))
-        attributed.append(NSAttributedString(string: suggestion, attributes: [
-            .font: font, .foregroundColor: ghostColor,
-        ]))
-
-        let tailWidth = ceil((typedTail as NSString).size(withAttributes: [.font: font]).width)
-        label.maximumNumberOfLines = 1
-        label.lineBreakMode = .byTruncatingTail
-        label.attributedStringValue = attributed
-        label.sizeToFit()
-        var textWidth = label.intrinsicContentSize.width
-
-        let hPad: CGFloat = 3, vPad: CGFloat = 2
-        // The tail/ghost boundary must land exactly at the caret's x.
-        let panelX = caretRect.maxX - tailWidth - hPad
-        var width = textWidth + hPad * 2
-        if let maxRightX {
-            let available = maxRightX - panelX
-            if available < tailWidth + 30 { hide(); return }
-            if width > available { width = available; textWidth = available - hPad * 2 }
-        }
-
-        let lineBox = font.ascender + abs(font.descender) + font.leading
-        let panelH = lineBox + vPad * 2
-        // Label baseline (ascender below its top) sits on the probed baseline.
-        let panelTopGlobal = (baseline - font.ascender) - vPad
-
-        // Layout within the panel (AppKit bottom-left origin).
-        mirrorBackdrop.isHidden = false
-        // A hair of translucency lets any residual colour mismatch blend into the
-        // field instead of reading as a hard-edged rectangle.
-        mirrorBackdrop.layer?.backgroundColor = backgroundColor.withAlphaComponent(0.98).cgColor
-        mirrorBackdrop.frame = CGRect(x: 0, y: 0, width: width, height: panelH)
-        label.frame = CGRect(x: hPad, y: vPad, width: textWidth, height: lineBox)
-        // Caret replica at the tail/ghost boundary, like a real insertion point.
-        caretBar.isHidden = false
-        caretBar.layer?.backgroundColor = textColor.cgColor
-        caretBar.frame = CGRect(x: hPad + tailWidth, y: vPad + 1,
-                                width: 1.5, height: lineBox - 2)
-
-        let flippedY = NSScreen.primaryHeight - (panelTopGlobal + panelH)
-        panel.setFrame(CGRect(x: panelX, y: flippedY, width: width, height: panelH),
-                       display: true)
-        panel.orderFrontRegardless()
-    }
-
     func hide() {
         lastInline = nil
         panel?.orderOut(nil)
         label.stringValue = ""
-        mirrorBackdrop.isHidden = true
-        caretBar.isHidden = true
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }

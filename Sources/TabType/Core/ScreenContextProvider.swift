@@ -95,7 +95,7 @@ final class ScreenContextProvider: ObservableObject {
         let fieldText = focused.flatMap { AccessibilityBridge.stringValue(of: $0) } ?? ""
         let caretRect = focused.flatMap { AccessibilityBridge.caretRect(of: $0) }
         let windowFrame = AccessibilityBridge.focusedWindowFrame()
-        let cropMode = AppSettings.shared.screenCropMode
+        let cropMode = AppSettings.ScreenCropMode.caretCropped
         // Chat apps: the conversation reads far cleaner from the AX tree than from
         // pixels — try that first, OCR only as fallback. Host-aware so web chats
         // (claude.ai, ChatGPT…) get the transcript path inside a browser too.
@@ -215,7 +215,7 @@ final class ScreenContextProvider: ObservableObject {
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let windowFrame = AccessibilityBridge.focusedWindowFrame()
         Task.detached(priority: .utility) {
-            if let (app, _, text) = await ScreenContextProvider.captureFocusedWindow(pid: pid, fieldText: "", cropMode: AppSettings.shared.screenCropMode, caretRect: nil, windowFrame: windowFrame) {
+            if let (app, _, text) = await ScreenContextProvider.captureFocusedWindow(pid: pid, fieldText: "", cropMode: .caretCropped, caretRect: nil, windowFrame: windowFrame) {
                 Log.shared.info("screen self-test: OCR \(text.count) chars from \(app) — \"\(text.prefix(60))\"")
             } else {
                 Log.shared.info("screen self-test: no content window captured")

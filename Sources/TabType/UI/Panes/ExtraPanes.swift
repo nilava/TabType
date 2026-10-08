@@ -14,14 +14,6 @@ struct ContextPane: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Text("TabType picks a context recipe per app: the conversation in chat apps and chat websites (accessibility tree, no screenshots), your document in writing apps, and nearby on-screen text elsewhere. Open the Apps section to see exactly what applies to each app — and to change it.")
                     .font(.caption).foregroundStyle(.secondary)
-                Picker("Screenshot extraction mode", selection: $settings.screenCropMode) {
-                    ForEach(AppSettings.ScreenCropMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .disabled(!settings.useScreenContext)
-                Text("Applies only when falling back to screenshot OCR. Caret-Aware focuses on the text around your cursor; Columnar helps with multi-column windows.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Use screenshots to improve suggestion appearance", isOn: $settings.useScreenshotAppearance)
                 Text("Samples the color around the caret so ghost text blends with the field's real text. May occasionally show a Screen Recording indicator in the menu bar.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -290,29 +282,6 @@ struct EmojiPane: View {
     }
 }
 
-/// Power-saving behavior in Low Power Mode.
-struct BatteryPane: View {
-    @EnvironmentObject var settings: AppSettings
-    var body: some View {
-        Form {
-            Section {
-                Label(PowerMonitor.shared.isLowPower
-                      ? "Low Power Mode is on — these settings are active."
-                      : "These settings take effect while macOS Low Power Mode is on.",
-                      systemImage: "bolt")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Section("In Low Power Mode") {
-                Toggle("Only show completions on demand", isOn: $settings.batteryOnDemandOnly)
-                Toggle("Generate slightly shorter completions", isOn: $settings.batteryShorterCompletions)
-                Toggle("Fall back to debounced suggestions", isOn: $settings.batteryUseDebounce)
-                Text("Reduces power draw. When Apple Intelligence is the engine, impact is minimal; this mainly helps the local model. \"Fall back to debounced suggestions\" automatically steps down from continuous generation (General ▸ Timing) in Low Power Mode, without needing to turn it off manually.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
 
 /// Local usage counters: words completed and suggestion acceptance rate.
 struct StatisticsPane: View {

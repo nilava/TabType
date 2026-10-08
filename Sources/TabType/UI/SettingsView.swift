@@ -11,7 +11,6 @@ struct SettingsView: View {
         case textTools = "Text Tools"
         case emoji = "Emoji"
         case shortcuts = "Shortcuts"
-        case battery = "Battery"
         case apps = "Apps"
         case advanced = "Advanced"
         case statistics = "Statistics"
@@ -28,7 +27,6 @@ struct SettingsView: View {
             case .textTools: return "character.cursor.ibeam"
             case .emoji: return "face.smiling"
             case .shortcuts: return "keyboard"
-            case .battery: return "battery.100"
             case .apps: return "app.badge"
             case .advanced: return "slider.horizontal.3"
             case .statistics: return "chart.bar"
@@ -89,7 +87,6 @@ struct SettingsView: View {
         case .textTools: TextToolsPane()
         case .emoji: EmojiPane()
         case .shortcuts: ShortcutsPane()
-        case .battery: BatteryPane()
         case .apps: AppsSettingsView()
         case .advanced: AdvancedSettingsView()
         case .statistics: StatisticsPane()
@@ -157,27 +154,6 @@ struct GeneralSettingsView: View {
                 HStack {
                     Text("Ghost text opacity")
                     Slider(value: $settings.ghostOpacity, in: 0.2...1.0)
-                }
-                Toggle("Text mirroring in web apps", isOn: $settings.textMirroring)
-                Text("Redraws your last word together with the suggestion on a matching backdrop, so both align perfectly in apps like Slack or Claude. Turn off to use plain ghost text everywhere.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("Timing") {
-                Toggle("Suggest continuously while typing", isOn: $settings.continuousGeneration)
-                Text(settings.continuousGeneration
-                     ? "Requests a suggestion on nearly every keystroke, so completions keep pace with fast typing. Uses more CPU while actively typing. Web apps like Slack or Claude always wait for a brief pause regardless."
-                     : "Waits for a pause in typing before requesting a suggestion.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if !settings.continuousGeneration {
-                    HStack {
-                        Text("Suggestion delay")
-                        Slider(value: Binding(
-                            get: { Double(settings.debounceMs) },
-                            set: { settings.debounceMs = Int($0) }), in: 40...600, step: 20)
-                        Text("\(settings.debounceMs) ms").monospacedDigit()
-                            .foregroundStyle(.secondary).frame(width: 60, alignment: .trailing)
-                    }
                 }
             }
         }
@@ -572,18 +548,6 @@ struct AdvancedSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Context") {
-                HStack {
-                    Text("Context window")
-                    Slider(value: Binding(
-                        get: { Double(settings.contextChars) },
-                        set: { settings.contextChars = Int($0) }), in: 100...2400, step: 50)
-                    Text("\(settings.contextChars)").monospacedDigit()
-                        .foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
-                }
-                Text("How much of the text before the cursor is read, in characters.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             Section("Diagnostics") {
                 Toggle("Verbose logging", isOn: $settings.verboseLog)
                 Button("Open Log in Console") {
@@ -597,7 +561,6 @@ struct AdvancedSettingsView: View {
             }
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    settings.contextChars = 1200
                     settings.verboseLog = false
                 }
             }

@@ -16,7 +16,6 @@ enum SectionAccent {
         case .textTools: return .teal
         case .emoji: return .yellow
         case .shortcuts: return .pink
-        case .battery: return .green
         case .apps: return .red
         case .advanced: return .blue
         case .statistics: return .cyan

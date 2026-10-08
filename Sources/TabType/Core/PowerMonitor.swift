@@ -34,8 +34,6 @@ final class PowerMonitor {
         }
     }
 
-    /// Extra debounce (ms) to add when on Low Power Mode.
-    var extraDebounceMs: Int { isLowPower ? 200 : 0 }
     /// Whether background screen capture should be paused.
     var shouldPauseCapture: Bool { isLowPower }
 }

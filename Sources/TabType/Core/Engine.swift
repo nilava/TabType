@@ -857,14 +857,6 @@ final class Engine {
 
     /// Wait for the keystroke to appear in the AX tree (host-publish), then predict.
     /// Polls on the main run loop without blocking; a token cancels stale schedules.
-    ///
-    /// In continuous mode (default), the "settle" wait is just long enough for the
-    /// keystroke to land in the AX tree — a prediction is requested on essentially
-    /// every keystroke, and `Predictor`'s coalescing (busy-gate + latest-request-wins)
-    /// collapses a fast-typing burst down to one generation at a time, so suggestions
-    /// keep pace with typing instead of only appearing once it pauses. In debounced
-    /// mode (opt-out, or automatic on battery — see `batteryUseDebounce`), the full
-    /// idle-wait behavior is preserved.
     private func schedulePrediction() {
         debounceWork?.cancel()
         scheduleToken += 1
@@ -889,16 +881,7 @@ final class Engine {
         // keystroke cancels the generation in flight (the engine's request gate),
         // so mid-burst requests never queue up behind each other, and the
         // stale-result guard drops anything the field has moved past.
-        let useContinuous = settings.continuousGeneration
-            && !(PowerMonitor.shared.isLowPower && settings.batteryUseDebounce)
-        if useContinuous {
-            poll(0.02)   // minimal settle — just a chance for host-publish, no idle-wait
-        } else {
-            // Initial settle = the configured debounce (+ battery back-off), then fast polls.
-            let baseDebounce = settings.debounceMs
-            let settle = baseDebounce + PowerMonitor.shared.extraDebounceMs
-            poll(Double(settle) / 1000.0)
-        }
+        poll(0.02)
     }
 
     /// If the token just before the boundary is a known emoticon (":-)"), replace it
@@ -1024,9 +1007,8 @@ final class Engine {
             }
         }
 
-        // Paused after Escape, or conserving battery (on-demand only).
+        // Paused after Escape.
         if let until = pausedUntil, Date() < until { return }
-        if PowerMonitor.shared.isLowPower && settings.batteryOnDemandOnly { return }
 
         // Per-domain disable (browsers).
         if !settings.disabledDomains.isEmpty, let host = AccessibilityBridge.frontmostURLHost(),
@@ -1052,7 +1034,7 @@ final class Engine {
         let ctx = ContextReader.gather(
             fallbackBuffer: buffer,
             screenContext: screenContext,
-            inputChars: policy.inputContextChars ?? settings.contextChars,
+            inputChars: policy.inputContextChars ?? AppSettings.inputContextChars,
             wantsDocumentHead: policy.documentProfile)
 
         // Google Docs renders to canvas — AX text is unavailable until the user
@@ -1142,8 +1124,7 @@ final class Engine {
             clipboard: clipboard,
             documentStart: ctx.documentStart,
             screenIsConversation: policy.transcriptViaAX,
-            maxWords: (PowerMonitor.shared.isLowPower && settings.batteryShorterCompletions)
-                ? min(settings.maxWords, 3) : settings.maxWords)
+            maxWords: settings.maxWords)
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
@@ -1240,7 +1221,7 @@ final class Engine {
         // deletions, Cmd+A wipe) — a result for stale input must never be shown.
         // Same guard the late-coalesced path has always had.
         let fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
-                                         inputChars: settings.contextChars)
+                                         inputChars: AppSettings.inputContextChars)
         switch session.evaluate(suggestion, requestedInput: ctxInput, currentInput: fresh.input) {
         case .present:
             break
@@ -1476,16 +1457,7 @@ final class Engine {
                     if let fit = await FieldFitCache.shared.fit(caret: target, fieldFrame: elementFrame, key: fitKey,
                                                                 lineText: lineText, verbose: self.settings.verboseLog) {
                         guard self.currentSuggestion == suggestion else { return }
-                        let baseline = target.minY + fit.baselineOffset
-                        if policy.laggyCaret, self.settings.textMirroring {
-                            self.overlay.showMirror(
-                                typedTail: Self.typedTail(element), suggestion: suggestion,
-                                caretRect: target, baseline: baseline, font: fittedFont(fit),
-                                textColor: fit.textColor, backgroundColor: fit.backgroundColor,
-                                ghostOpacity: self.settings.ghostOpacity, maxRightX: boxRight)
-                        } else {
-                            paint(target, fittedFont(fit), fit.textColor, baseline)
-                        }
+                        paint(target, fittedFont(fit), fit.textColor, target.minY + fit.baselineOffset)
                         return
                     }
                 }
@@ -1510,35 +1482,11 @@ final class Engine {
                     }
                 }
 
-                // Text mirror: re-render typed tail + suggestion on a field-matched
-                // backdrop. Only for laggy apps that report no style.
-                if policy.laggyCaret, self.settings.textMirroring,
-                   let baseline = probedBaseline,
-                   let appearance = GhostAppearanceProbe.shared.current {
-                    let tail = Self.typedTail(AccessibilityBridge.focusedElement())
-                    Log.shared.debug("placement: mirror tail=\"\(tail)\"")
-                    self.overlay.showMirror(
-                        typedTail: tail, suggestion: suggestion, caretRect: target,
-                        baseline: baseline, font: useFont,
-                        textColor: appearance.textColor,
-                        backgroundColor: appearance.backgroundColor,
-                        ghostOpacity: self.settings.ghostOpacity,
-                        maxRightX: boxRight)
-                    return
-                }
                 paint(target, useFont, nil, probedBaseline)
             }
         } else {
             overlay.showHUD(text: suggestion, windowRect: windowRect)
         }
-    }
-
-    /// The partly typed word before the caret (for the text mirror).
-    private static func typedTail(_ element: AXUIElement?) -> String {
-        let before = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 40) } ?? ""
-        guard !before.hasSuffix(" "), !before.hasSuffix("\n"),
-              let last = before.split(whereSeparator: { $0 == " " || $0 == "\n" }).last else { return "" }
-        return String(last.suffix(24))
     }
 
     // MARK: - Accept / dismiss
