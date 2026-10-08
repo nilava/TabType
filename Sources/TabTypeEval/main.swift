@@ -107,6 +107,7 @@ case "run":
                                  template: template, templateName: templateName,
                                  authorName: option("--author") ?? "Nilava Chowdhury",
                                  situationHeader: arguments.contains("--header"),
+                                 noisy: arguments.contains("--noise"),
                                  history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
                                  hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
     case let other:
@@ -134,10 +135,11 @@ case "sweep":
     guard let path = positional() else { fail("sweep needs a run .json path") }
     let run = try EvalRunner.load(url(path))
     guard run.results.contains(where: { $0.confidence != nil }) else { fail("run has no confidences") }
-    print("threshold  chars/case  recall  precision  show   wrong-show")
+    print("threshold  chars/case  recall  precision  show   wrong-show  fully-right  wrong-words")
     for (t, s) in EvalRunner.sweep(run, thresholds: [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]) {
-        print(String(format: "  %4.2f      %5.2f     %5.1f%%   %5.1f%%   %5.1f%%   %5.1f%%", t,
-                     s.acceptedCharsPerCase, s.recall * 100, s.precision * 100, s.showRate * 100, s.wrongShowRate * 100))
+        print(String(format: "  %4.2f      %5.2f     %5.1f%%   %5.1f%%   %5.1f%%   %5.1f%%     %5.1f%%      %5.2f", t,
+                     s.acceptedCharsPerCase, s.recall * 100, s.precision * 100, s.showRate * 100, s.wrongShowRate * 100,
+                     (s.fullyRightRate ?? 0) * 100, s.wrongWordsPerCase ?? 0))
     }
 
 case "prompt":
@@ -145,7 +147,9 @@ case "prompt":
           let template = ModelTemplate.named(name) else { fail("prompt needs --cases and a valid --template") }
     let cases = try JSONL.read(EvalCase.self, from: url(casesPath))
     let c = cases[min(option("--index").flatMap(Int.init) ?? 0, cases.count - 1)]
-    print(PromptAssembler(template: template).assemble(c.promptContext(authorName: option("--author") ?? "Nilava Chowdhury")))
+    print(PromptAssembler(template: template, situationHeader: arguments.contains("--header"))
+        .assemble(c.promptContext(authorName: option("--author") ?? "Nilava Chowdhury",
+                                  noisy: arguments.contains("--noise"))))
 
 case "catalog":
     let catalog = try ModelCatalog.bundled()

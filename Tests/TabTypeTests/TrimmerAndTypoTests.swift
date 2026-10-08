@@ -116,3 +116,16 @@ final class TrimmerAndTypoTests: XCTestCase {
         XCTAssertTrue(Engine.shouldPredict("email me at x@y.com and then we"))
     }
 }
+
+final class PartialTypoGateTests: XCTestCase {
+    func testLongLowercasePartialIsChecked() {
+        XCTAssertTrue(Engine.partialMayBeTypo("recie", context: "please recie"))
+    }
+
+    func testShortCapitalisedOrKnownFromContextIsExempt() {
+        XCTAssertFalse(Engine.partialMayBeTypo("rec", context: "please rec"))
+        XCTAssertFalse(Engine.partialMayBeTypo("Nila", context: "thanks Nila"))
+        // Jargon already on screen: "kubectl" appeared earlier.
+        XCTAssertFalse(Engine.partialMayBeTypo("kube", context: "run kubectl apply\nthen kube"))
+    }
+}

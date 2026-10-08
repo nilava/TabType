@@ -97,7 +97,9 @@ final class AppSettings: ObservableObject {
         }
     }
     static func words(for length: String) -> Int {
-        switch length { case "short": return 3; case "long": return 14; default: return 8 }
+        // Eval (seed-v1, Qwen3-4B base): past ~4 words, extra words are mostly
+        // wrong ones on screen (8 → 4 words: same characters saved, fewer wrong).
+        switch length { case "short": return 2; case "long": return 8; default: return 4 }
     }
 
     // MARK: Personalization
@@ -139,7 +141,8 @@ final class AppSettings: ObservableObject {
         isEnabled = defaults.object(forKey: Keys.isEnabled) as? Bool ?? true
         debounceMs = defaults.object(forKey: Keys.debounceMs) as? Int ?? 90
         continuousGeneration = defaults.object(forKey: Keys.continuousGeneration) as? Bool ?? true
-        maxWords = defaults.object(forKey: Keys.maxWords) as? Int ?? 8
+        // The length setting is the source of truth (older builds stored 8 here).
+        maxWords = AppSettings.words(for: defaults.string(forKey: Keys.completionLength) ?? "medium")
         acceptWholeLine = defaults.object(forKey: Keys.acceptWholeLine) as? Bool ?? false
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
         // Settings that only the removed v1 (MLX / Apple Intelligence) engine used.

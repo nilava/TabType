@@ -1155,13 +1155,12 @@ final class Engine {
         Task { [weak self] in
             guard let self else { return }
             // Completing a misspelling is never what the user wants — skip the whole
-            // generation when the last COMPLETED word looks like a typo (opt-out via
-            // Settings ▸ Text Tools). Mid-word partials are exempt: a half-typed rare
-            // name ("Nil…") is indistinguishable from a typo to the dictionary, and
-            // gating on it suppressed generation for exactly the words the model is
-            // best placed to finish from context.
+            // generation when the last word, or the word being typed, looks like a
+            // typo (opt-out via Settings ▸ Text Tools). A half-typed word counts
+            // only when it can't be a name or jargon: 4+ letters, lowercase, and no
+            // word on screen or earlier in the text starts with it.
             if self.settings.skipOnTypo, let (token, isPartial) = Engine.typoCheckToken(ctx.input),
-               !isPartial,
+               !isPartial || Engine.partialMayBeTypo(token, context: ctx.input + "\n" + screenContext),
                await SpellChecker.shared.isLikelyTypo(
                    word: token, isPartial: isPartial, language: self.settings.autocorrectLanguage) {
                 Log.shared.debug("predict -> (typo before caret, skipped: \"\(token)\")")
@@ -1173,6 +1172,16 @@ final class Engine {
             await self.handlePredictionResult(
                 raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt)
         }
+    }
+
+    /// A half-typed word worth checking against the dictionary: long enough to
+    /// judge, not capitalised (names), and not the start of any word already in
+    /// the context (names and jargon the dictionary doesn't know).
+    nonisolated static func partialMayBeTypo(_ partial: String, context: String) -> Bool {
+        guard partial.count >= 4, partial.first?.isLowercase == true else { return false }
+        let lower = partial.lowercased()
+        let earlier = context.lowercased().dropLast(partial.count)
+        return !earlier.split(whereSeparator: { !$0.isLetter }).contains { $0.hasPrefix(lower) }
     }
 
     /// The token the typo gate should inspect: the trailing letter-run when the caret

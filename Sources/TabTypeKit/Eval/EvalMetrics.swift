@@ -11,6 +11,13 @@ public struct CaseScore: Codable, Sendable, Equatable {
     public var acceptedChars: Int
     /// Number of chunks accepted that way.
     public var acceptedChunks: Int
+    /// Chunks the suggestion showed (nil in runs recorded before this was kept).
+    public var shownChunks: Int?
+
+    /// Every chunk shown was right.
+    public var fullyRight: Bool { shown && acceptedChunks == (shownChunks ?? acceptedChunks) }
+    /// Chunks shown past the last right one — wrong words on screen.
+    public var wrongChunks: Int { shown ? max(0, (shownChunks ?? acceptedChunks) - acceptedChunks) : 0 }
 }
 
 public enum EvalScorer {
@@ -31,12 +38,14 @@ public enum EvalScorer {
     public static func score(suggestion: String, truth: String) -> CaseScore {
         let shown = !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard shown else {
-            return CaseScore(shown: false, firstChunkCorrect: false, acceptedChars: 0, acceptedChunks: 0)
+            return CaseScore(shown: false, firstChunkCorrect: false, acceptedChars: 0, acceptedChunks: 0,
+                             shownChunks: 0)
         }
         var remaining = Substring(truth)
         var chars = 0
         var count = 0
-        for chunk in chunks(suggestion) {
+        let shownChunks = chunks(suggestion)
+        for chunk in shownChunks {
             guard remaining.hasPrefix(chunk) else { break }
             // A chunk that is a strict prefix of a longer truth word ("pro" vs
             // "proposal") still counts — the author would accept it and keep typing.
@@ -45,7 +54,7 @@ public enum EvalScorer {
             count += 1
         }
         return CaseScore(shown: true, firstChunkCorrect: count > 0,
-                         acceptedChars: chars, acceptedChunks: count)
+                         acceptedChars: chars, acceptedChunks: count, shownChunks: shownChunks.count)
     }
 }
 
@@ -67,6 +76,10 @@ public struct EvalSummary: Codable, Sendable, Equatable {
     public var acceptedCharsPerCase: Double
     public var latencyP50Ms: Double
     public var latencyP95Ms: Double
+    /// Of the shown suggestions, the fraction that was right in full.
+    public var fullyRightRate: Double?
+    /// Wrong words shown per case (chunks past the last right one).
+    public var wrongWordsPerCase: Double?
     public var byKind: [String: Slice]
     public var byCategory: [String: Slice]
 
@@ -97,6 +110,8 @@ public struct EvalSummary: Codable, Sendable, Equatable {
         recall = Double(firstChunkCorrect) / n
         wrongShowRate = Double(shown - firstChunkCorrect) / n
         acceptedCharsPerCase = Double(acceptedChars) / n
+        fullyRightRate = shown == 0 ? 0 : Double(results.filter(\.score.fullyRight).count) / Double(shown)
+        wrongWordsPerCase = Double(results.reduce(0) { $0 + $1.score.wrongChunks }) / n
         let latencies = results.map(\.latencyMs).sorted()
         func pct(_ p: Double) -> Double {
             guard !latencies.isEmpty else { return 0 }
@@ -128,6 +143,12 @@ public enum EvalReport {
         lines.append(row("precision (when shown)", pct(s.precision), b.map { pct($0.precision) }))
         lines.append(row("show rate", pct(s.showRate), b.map { pct($0.showRate) }))
         lines.append(row("wrong-show rate", pct(s.wrongShowRate), b.map { pct($0.wrongShowRate) }))
+        if let full = s.fullyRightRate {
+            lines.append(row("fully right (when shown)", pct(full), b?.fullyRightRate.map { pct($0) }))
+        }
+        if let junk = s.wrongWordsPerCase {
+            lines.append(row("wrong words shown / case", num(junk), b?.wrongWordsPerCase.map { num($0) }))
+        }
         lines.append(row("latency p50", ms(s.latencyP50Ms), b.map { ms($0.latencyP50Ms) }))
         lines.append(row("latency p95", ms(s.latencyP95Ms), b.map { ms($0.latencyP95Ms) }))
         for (title, dict, bdict) in [("kind", s.byKind, b?.byKind), ("category", s.byCategory, b?.byCategory)] {

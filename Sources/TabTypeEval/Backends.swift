@@ -16,11 +16,53 @@ enum EvalPrompt {
 
 extension EvalCase {
     /// The writing situation as the app would describe it to the prompt assembler.
-    func promptContext(authorName: String?) -> PromptContext {
+    /// `noisy`: what a live capture adds — window chrome and unrelated text around
+    /// OCR'd context (non-conversation cases), and unrelated clipboard contents.
+    func promptContext(authorName: String?, noisy: Bool = false) -> PromptContext {
         let isConversation = category == "chat" && context.contains(": ")
+        var screen = context
+        var clipboard: String?
+        if noisy {
+            let pick = abs(id.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) })
+            let n = EvalNoise.self
+            if !isConversation {
+                let chrome = n.chrome[pick % n.chrome.count]
+                // A window's worth of unrelated text (list items, other panes).
+                let other = (0..<n.unrelated.count).map { n.unrelated[($0 + pick / 7) % n.unrelated.count] }
+                    .joined(separator: "\n")
+                screen = [chrome.top, other, context, chrome.bottom].filter { !$0.isEmpty }.joined(separator: "\n")
+            }
+            clipboard = n.clipboard[(pick / 13) % n.clipboard.count]
+        }
         return PromptContext(typedText: prefix, appName: app, authorName: authorName,
-                             screenText: context.isEmpty ? nil : context, isConversation: isConversation)
+                             screenText: screen.isEmpty ? nil : screen, isConversation: isConversation,
+                             clipboard: clipboard)
     }
+}
+
+/// Synthetic capture noise for robustness runs (`--noise`).
+enum EvalNoise {
+    static let chrome: [(top: String, bottom: String)] = [
+        ("Inbox 24\nStarred\nSnoozed\nSent\nDrafts 3\nSearch mail", "Reply   Forward\n12:41 PM"),
+        ("File  Edit  View  Insert  Format  Tools  Help\nAll changes saved", "Page 2 of 5   1,204 words"),
+        ("Home   Channels   DMs   Activity\n# general\n# random", "Message #general\nAa  @  🙂"),
+        ("Q Search\nNew Tab   Downloads   Settings", "Terms · Privacy · Help\n© 2026"),
+        ("Untitled ▾  Share  ⋯\nLast edited 3 minutes ago", "Show more\n2 comments"),
+    ]
+    static let unrelated: [String] = [
+        "Quarterly revenue grew 12% year over year, driven by strong demand in the enterprise segment.",
+        "To reset your password, open Settings and choose Security, then follow the prompts.",
+        "The recipe calls for two cups of flour, a pinch of salt and three eggs, whisked until smooth.",
+        "Weather today: partly cloudy with a high of 24°C and light winds from the west.",
+        "Release notes: fixed a crash when exporting large files and improved sync reliability.",
+    ]
+    static let clipboard: [String] = [
+        "https://docs.example.com/projects/alpha/specs?id=4471",
+        "let total = items.reduce(0) { $0 + $1.price }",
+        "221B Baker Street, London NW1 6XE",
+        "Meeting notes: budget review moved to Thursday, Ana to send the deck.",
+        "Order #A-55102 shipped via express courier.",
+    ]
 }
 
 /// v2 decoder: token healing, parallel candidates, confidence scoring, phrase
@@ -40,6 +82,7 @@ final class DecoderBackend: CompletionBackend {
     /// entries (case ids start with their entry index).
     private let history: [CorpusEntry]?
     private let hintFactor: Double
+    private let noisy: Bool
     private var indexes: [Int: SuffixIndex] = [:]
     private(set) var hintsOffered = 0
     private(set) var hintsUsed = 0
@@ -47,7 +90,9 @@ final class DecoderBackend: CompletionBackend {
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
          template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
+         noisy: Bool = false,
          history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
+        self.noisy = noisy
         self.history = history
         self.hintFactor = hintFactor
         self.runtime = runtime
@@ -60,7 +105,7 @@ final class DecoderBackend: CompletionBackend {
     }
 
     func complete(_ evalCase: EvalCase) async throws -> String? {
-        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName))
+        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName, noisy: noisy))
             ?? EvalPrompt.document(for: evalCase)
         var options = self.options
         var support = 0

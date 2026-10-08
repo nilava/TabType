@@ -81,16 +81,14 @@ public struct PromptAssembler: Sendable {
             parts.append("Notes about the writer: \(notes)")
         }
         let typed = typedText(c)
-        if let screen = screenText(c) {
-            if c.isConversation {
-                // The author's reply is the next line of the conversation.
-                return join(parts + [screen + "\n" + speaker(c) + ": " + typed])
-            }
-            parts.append(screen)
+        let screen = screenText(c)
+        if let screen, c.isConversation {
+            // The author's reply is the next line of the conversation.
+            return join(parts + [screen + "\n" + speaker(c) + ": " + typed])
         }
-        if let clip = clean(c.clipboard, limit: budgets.clipboard) {
-            parts.append("Copied text: \(clip)")
-        }
+        let clip = clean(c.clipboard, limit: budgets.clipboard)
+        if let screen { parts.append(screen) }
+        if let clip { parts.append("Copied text: \(clip)") }
         return join(parts + [typed])
     }
 

@@ -144,9 +144,9 @@ struct GeneralSettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 Picker("Completion length", selection: $settings.completionLength) {
-                    Text("Short (~3 words)").tag("short")
-                    Text("Medium (~8 words)").tag("medium")
-                    Text("Long (~14 words)").tag("long")
+                    Text("Short (1–2 words)").tag("short")
+                    Text("Medium (up to 4 words)").tag("medium")
+                    Text("Long (up to 8 words)").tag("long")
                 }
             }
 

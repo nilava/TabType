@@ -30,7 +30,17 @@ public struct ModelTemplate: Codable, Sendable, Equatable {
         self.reservedMarkers = reservedMarkers
     }
 
-    public static let base = ModelTemplate(kind: .base)
+    /// Base models continue raw text — but the prompt is tokenized with special
+    /// tokens parsed, so control-token strings in captured content (an OCR'd chat
+    /// transcript, a pasted prompt) would become real control tokens. Strip the
+    /// common families' markers.
+    public static let base = ModelTemplate(kind: .base, reservedMarkers: [
+        "<|im_start|>", "<|im_end|>", "<|endoftext|>", "<think>", "</think>",
+        "<start_of_turn>", "<end_of_turn>", "<bos>", "<eos>",
+        "<|turn>", "<turn|>", "<|think|>", "<|channel>", "<channel|>",
+        "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>", "<|begin_of_text|>",
+        "<|user|>", "<|assistant|>", "<|end|>", "<|system|>",
+    ])
 
     /// ChatML (Qwen instruct models without a thinking phase).
     public static let chatML = ModelTemplate(

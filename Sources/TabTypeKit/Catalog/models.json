@@ -15,7 +15,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 8,
       "showThreshold": 0.25,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "qwen3-1.7b-base",
@@ -31,7 +31,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 8,
       "showThreshold": 0.2,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "qwen3-4b-base",
@@ -47,7 +47,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 16,
       "showThreshold": 0.2,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "qwen3-4b-instruct",
@@ -63,7 +63,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 16,
       "showThreshold": 0.6,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "gemma-4-e2b-base",
@@ -79,7 +79,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 16,
       "showThreshold": 0.2,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "gemma-4-e2b-it",
@@ -95,7 +95,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 16,
       "showThreshold": 0.75,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     },
     {
       "id": "gemma-4-e4b-base",
@@ -111,7 +111,7 @@
       "requiresTermsNotice": false,
       "minimumRAMGB": 24,
       "showThreshold": 0.25,
-      "extensionThreshold": 0.3
+      "extensionThreshold": 0.5
     }
   ],
   "recommendations": [

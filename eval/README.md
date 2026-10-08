@@ -39,7 +39,12 @@ author actually typed, stopping at the first chunk that differs.
 | next-word recall | Cases where the first accepted chunk was right |
 | precision | Of suggestions shown, how many had a right first chunk |
 | wrong-show rate | Cases where a wrong suggestion was shown (noise the user sees) |
+| fully right (when shown) | Of suggestions shown, how many were right in every word |
+| wrong words shown / case | Words shown past the last right one — what a long suggestion costs |
 | latency p50/p95 | Wall time per suggestion |
+
+`--noise` adds what a live capture adds to the context: window chrome and a
+window's worth of unrelated text around OCR'd context, and an unrelated clipboard.
 
 Tune the show threshold from one ungated decoder run:
 
@@ -47,6 +52,26 @@ Tune the show threshold from one ungated decoder run:
 .build/release/tabtype-eval run --model <file.gguf> --cases eval/cases/seed-v1.jsonl --out ungated.json
 .build/release/tabtype-eval sweep ungated.json
 ```
+
+## Suggestion length and capture noise (seed-v1, Qwen3-4B base, header, threshold 0.2)
+
+The first-word numbers (recall 58.3%, precision 73.2%) don't depend on length;
+what changes is how much wrong text follows a right first word.
+
+| max words · extension bar | chars / case | fully right | wrong words / case |
+|---|---|---|---|
+| 1 | 2.30 | 73.2% | 0.21 |
+| 2 · 0.3 | 3.16 | 60.8% | 0.39 |
+| 8 · 0.3 (previous default) | 3.43 | 54.9% | 0.69 |
+| 2 · 0.5 | 2.82 | 68.6% | 0.28 |
+| **4 · 0.5 (default)** | **2.92** | **66.7%** | **0.33** |
+| 4 · 0.7 | 2.68 | 70.6% | 0.26 |
+
+Capture noise (`--noise`, 4 words · 0.5): light chrome changes nothing; a window's
+worth of unrelated text costs ~3 points of precision (73.2 → 70.3%, wrong-show
+21.4 → 24.0%). Labelling the context sections and closing them with a separator
+before the typed text did not help reliably (docs +8 pts recall, email −7 pts), so
+the plain layout stays.
 
 ## Phase 3 — model and prompt selection (seed-v1, 192 cases)
 
