@@ -39,6 +39,10 @@ final class AppSettings: ObservableObject {
     @Published var skipOnTypo: Bool { didSet { defaults.set(skipOnTypo, forKey: Keys.skipOnTypo) } }
     @Published var emoticonsEnabled: Bool { didSet { defaults.set(emoticonsEnabled, forKey: Keys.emoticonsEnabled) } }
     @Published var emojiSkinTone: String { didSet { defaults.set(emojiSkinTone, forKey: Keys.emojiSkinTone) } }
+    /// Preferred variant of gendered emoji: "any" | "neutral" | "woman" | "man".
+    @Published var emojiGender: String { didSet { defaults.set(emojiGender, forKey: Keys.emojiGender) } }
+    /// Keep the gender-neutral variant in the list next to the preferred one.
+    @Published var emojiIncludeNeutral: Bool { didSet { defaults.set(emojiIncludeNeutral, forKey: Keys.emojiIncludeNeutral) } }
 
     // MARK: Shortcuts behavior
     @Published var includeTrailingSpace: Bool { didSet { defaults.set(includeTrailingSpace, forKey: Keys.includeTrailingSpace) } }
@@ -205,6 +209,8 @@ final class AppSettings: ObservableObject {
         skipOnTypo = defaults.object(forKey: Keys.skipOnTypo) as? Bool ?? true
         emoticonsEnabled = defaults.object(forKey: Keys.emoticonsEnabled) as? Bool ?? true
         emojiSkinTone = defaults.string(forKey: Keys.emojiSkinTone) ?? "none"
+        emojiGender = defaults.string(forKey: Keys.emojiGender) ?? "any"
+        emojiIncludeNeutral = defaults.object(forKey: Keys.emojiIncludeNeutral) as? Bool ?? true
         includeTrailingSpace = defaults.object(forKey: Keys.includeTrailingSpace) as? Bool ?? false
         includeTrailingPunctuation = defaults.object(forKey: Keys.includeTrailingPunctuation) as? Bool ?? false
         escapeBehavior = defaults.string(forKey: Keys.escapeBehavior) ?? "dismiss"
@@ -278,6 +284,8 @@ final class AppSettings: ObservableObject {
         static let autocorrectLanguage = "autocorrectLanguage"
         static let emoticonsEnabled = "emoticonsEnabled"
         static let emojiSkinTone = "emojiSkinTone"
+        static let emojiGender = "emojiGender"
+        static let emojiIncludeNeutral = "emojiIncludeNeutral"
         static let includeTrailingSpace = "includeTrailingSpace"
         static let includeTrailingPunctuation = "includeTrailingPunctuation"
         static let escapeBehavior = "escapeBehavior"

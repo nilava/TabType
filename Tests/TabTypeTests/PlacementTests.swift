@@ -164,3 +164,19 @@ final class InsertionWorkaroundTests: XCTestCase {
         XCTAssertEqual(TextInserter.transformed("at it", options: o), "at\u{00A0}it")
     }
 }
+
+final class EmojiGenderTests: XCTestCase {
+    private func emoji(_ code: String) -> Emoji {
+        try! JSONDecoder().decode(Emoji.self, from: Data("{\"code\":\"\(code)\",\"char\":\"x\"}".utf8))
+    }
+
+    func testPreferredGenderFirstNeutralOptional() {
+        let ranked = ["ok_person", "ok_man", "ok_woman", "ok_hand"].map(emoji)
+        XCTAssertEqual(EmojiMatcher.preferringGender(ranked, gender: "woman", includeNeutral: true).map(\.code),
+                       ["ok_woman", "ok_person", "ok_man", "ok_hand"])
+        XCTAssertEqual(EmojiMatcher.preferringGender(ranked, gender: "man", includeNeutral: false).map(\.code),
+                       ["ok_man", "ok_woman", "ok_hand"])
+        XCTAssertEqual(EmojiMatcher.preferringGender(ranked, gender: "any", includeNeutral: false).map(\.code),
+                       ranked.map(\.code))
+    }
+}

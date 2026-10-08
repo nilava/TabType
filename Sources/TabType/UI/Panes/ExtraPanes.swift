@@ -300,6 +300,14 @@ struct EmojiPane: View {
                 }
                 Text("Applied to emoji that support skin-tone modifiers.")
                     .font(.caption).foregroundStyle(.secondary)
+                Picker("Preferred gender", selection: $settings.emojiGender) {
+                    Text("No preference").tag("any")
+                    Text("Gender-neutral").tag("neutral")
+                    Text("Woman").tag("woman")
+                    Text("Man").tag("man")
+                }
+                Toggle("Include the gender-neutral variant", isOn: $settings.emojiIncludeNeutral)
+                    .disabled(settings.emojiGender == "any" || settings.emojiGender == "neutral")
             }
         }
         .formStyle(.grouped)

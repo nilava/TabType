@@ -113,6 +113,37 @@ final class EmojiMatcher {
         .map(\.0)
     }
 
+    /// Gendered variants of one emoji ("ok_person" / "ok_man" / "ok_woman") are
+    /// reordered by the preferred gender; the neutral one is kept only when
+    /// wanted. A family stays where its best-ranked member was.
+    nonisolated static func preferringGender(_ ranked: [Emoji], gender: String, includeNeutral: Bool) -> [Emoji] {
+        guard gender != "any" else { return ranked }
+        func split(_ e: Emoji) -> (family: String, gender: String)? {
+            let tokens = e.code.split(separator: "_").map(String.init)
+            let map = ["man": "man", "men": "man", "woman": "woman", "women": "woman",
+                       "person": "neutral", "people": "neutral"]
+            guard let g = tokens.compactMap({ map[$0] }).first else { return nil }
+            let family = tokens.filter { map[$0] == nil }.joined(separator: "_")
+            return family.isEmpty ? nil : (family, g)
+        }
+        var out: [Emoji] = []
+        var done = Set<String>()
+        for e in ranked {
+            guard let s = split(e) else { out.append(e); continue }
+            guard done.insert(s.family).inserted else { continue }
+            let members = ranked.filter { split($0)?.family == s.family }
+            let rank: (Emoji) -> Int = { m in
+                let g = split(m)!.gender
+                return g == gender ? 0 : (g == "neutral" ? 1 : 2)
+            }
+            let hasPreferred = members.contains { rank($0) == 0 }
+            out += members.sorted { rank($0) < rank($1) }.filter {
+                !(rank($0) == 1 && !includeNeutral && hasPreferred && gender != "neutral")
+            }
+        }
+        return out
+    }
+
     /// Cheap fuzzy: bounded Levenshtein ≤ 2 against the code.
     private static func fuzzy(_ q: String, _ code: String) -> Bool {
         let a = Array(q), b = Array(code)

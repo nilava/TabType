@@ -168,7 +168,9 @@ final class InlineCommandController {
     private func refreshPreview(_ caret: CGRect?) {
         switch mode {
         case .emoji:
-            candidates = EmojiMatcher.shared.matches(for: query, limit: 6)
+            candidates = Array(EmojiMatcher.preferringGender(
+                EmojiMatcher.shared.matches(for: query, limit: 18),
+                gender: settings.emojiGender, includeNeutral: settings.emojiIncludeNeutral).prefix(6))
             selectedIndex = 0
             if query.isEmpty {
                 preview.show(text: "type an emoji name…", caretRect: caret)
