@@ -99,6 +99,9 @@ case "run":
         if let n = option("--max-words").flatMap(Int.init) { options.maxWords = n }
         if let p = option("--extend").flatMap(Double.init) { options.extensionThreshold = p }
         if let k = option("--candidates").flatMap(Int.init) { options.candidates = k }
+        if let w = option("--beam").flatMap(Int.init) { options.beamWidth = w }
+        if let b = option("--branch").flatMap(Int.init) { options.beamBranching = b }
+        if arguments.contains("--beam-all-first-words") { options.beamFromBestFirstWord = false }
         let templateName = option("--template") ?? "legacy"
         let template = templateName == "legacy" ? nil : ModelTemplate.named(templateName)
         if templateName != "legacy", template == nil { fail("unknown template \(templateName)") }

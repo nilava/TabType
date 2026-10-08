@@ -32,7 +32,8 @@ public final class LlamaRuntime: TokenModel, @unchecked Sendable {
     public struct Configuration: Sendable {
         public var contextLength: Int = 4096
         public var batchSize: Int = 512
-        public var maxSequences: Int = 8
+        /// Prompt + twice the decoder's beam (a branching step briefly holds both).
+        public var maxSequences: Int = 20
         public init() {}
     }
 
@@ -234,6 +235,12 @@ public final class LlamaRuntime: TokenModel, @unchecked Sendable {
         precondition(sequence > 0 && sequence < maxSequences)
         llama_memory_seq_rm(memory, Int32(sequence), -1, -1)
         llama_memory_seq_cp(memory, 0, Int32(sequence), -1, -1)
+    }
+
+    public func copy(sequence source: Int, to target: Int) {
+        precondition(target > 0 && target < maxSequences && source != target)
+        llama_memory_seq_rm(memory, Int32(target), -1, -1)
+        llama_memory_seq_cp(memory, Int32(source), Int32(target), -1, -1)
     }
 
     public func decode(_ entries: [BatchEntry]) throws -> [Logits] {

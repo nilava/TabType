@@ -34,6 +34,9 @@ public protocol TokenModel: AnyObject {
     func evaluatePrompt(_ tokens: [TokenID]) throws -> Logits
     /// Copy sequence 0's cached prompt into `sequence`.
     func fork(to sequence: Int)
+    /// Make `target` an exact copy of `source` (prompt and generated tokens) — a
+    /// beam that branches.
+    func copy(sequence source: Int, to target: Int)
     /// Decode one token per entry in a single batch; returns logits per entry.
     func decode(_ entries: [BatchEntry]) throws -> [Logits]
     /// Remove a candidate sequence from the cache.

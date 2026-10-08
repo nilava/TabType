@@ -7,7 +7,7 @@ import Foundation
 /// sequence's text so far.
 final class FakeModel: TokenModel {
     let vocab: VocabIndex
-    let maxSequences = 8
+    let maxSequences = 20
     private let names: [String]
     private let byteBase: Int
     private let rules: [(suffix: String, logits: [String: Float])]
@@ -49,6 +49,8 @@ final class FakeModel: TokenModel {
     }
 
     func fork(to sequence: Int) { sequenceText[sequence] = sequenceText[0] }
+
+    func copy(sequence source: Int, to target: Int) { sequenceText[target] = sequenceText[source] }
 
     func decode(_ entries: [BatchEntry]) throws -> [Logits] {
         releaseBuffers()

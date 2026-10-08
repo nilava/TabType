@@ -73,6 +73,20 @@ what changes is how much wrong text follows a right first word.
 word (the next word rarely clears 0.5), so a Tab chain needed a new prediction
 per word. 0.2 keeps ~95% of the uncapped characters with ~40% fewer wrong words.
 
+### Phrase search (4 words, bar 0.2)
+
+| | chars / case | recall | fully right | wrong words / case | p50 |
+|---|---|---|---|---|---|
+| greedy extension of the best first word | 3.62 | 58.3% | 39.2% | 0.95 | 90 ms |
+| beam of 9 over all first words | 3.24 | 54.7% | 51.4% | 0.64 | 232 ms |
+| **beam of 9 from the best first word (default)** | **3.42** | **58.3%** | **48.4%** | **0.72** | **147 ms** |
+
+The beam (Cotypist's search: 9 phrases, 3 next tokens each, ranked by total
+probability) finds phrases that are right in full far more often. Letting it
+also swap the first word cost first-word recall, so it starts from the best
+first word. Dropping phrases that already score below the best finished one is
+exact and cut latency from 253 to 147 ms.
+
 Capture noise (`--noise`, 4 words · 0.5): light chrome changes nothing; a window's
 worth of unrelated text costs ~3 points of precision (73.2 → 70.3%, wrong-show
 21.4 → 24.0%). Labelling the context sections and closing them with a separator

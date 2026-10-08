@@ -200,4 +200,26 @@ final class GenerationGateTests: XCTestCase {
         XCTAssertFalse(gate.isCurrent(first))
         XCTAssertTrue(gate.isCurrent(second))
     }
+
+}
+
+final class BeamSearchTests: XCTestCase {
+    /// The beam ranks whole phrases: "look into" (≈0.45 × 1) beats "take a"
+    /// (≈0.55 × 1/3) even though "take" alone is the likelier first word.
+    func testBeamPrefersTheMoreProbablePhrase() throws {
+        let m = FakeModel(pieces: ["<eos>", " take", " look", " a", " the", " it", " into"], rules: [
+            "I will": [" take": 3.0, " look": 2.8],
+            "will take": [" a": 1, " the": 1, " it": 1],
+            "will look": [" into": 8],
+            "look into": [" it": 8],
+        ])
+        var options = DecoderOptions()
+        options.maxWords = 2
+        options.extensionThreshold = 0
+        let r = try XCTUnwrap(CompletionDecoder.complete("I will", model: m, options: options))
+        XCTAssertEqual(r.text, " look into")
+        XCTAssertEqual(r.confidence, 0.45, accuracy: 0.03)
+        XCTAssertEqual(r.alternatives.first?.text, " take")
+        XCTAssertTrue(m.liveCandidateSequences.isEmpty, "beam sequences must be released")
+    }
 }

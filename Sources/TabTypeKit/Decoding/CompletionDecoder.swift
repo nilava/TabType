@@ -6,14 +6,23 @@ public struct DecoderOptions: Sendable, Equatable {
     public var candidates = 4
     /// First tokens below this probability are not explored.
     public var minFirstTokenProbability = 0.02
-    /// After the first word, extend the suggestion word by word while each next
-    /// word's probability stays at or above this. >1 disables extension.
+    /// After the beam picks a phrase, words past the first are kept while each
+    /// one's probability (given the words before it) stays at or above this; 0
+    /// shows the whole phrase, >1 disables extension.
     /// Eval seed-v1 (Qwen3-4B base, 4 words): 0.2 keeps ~95% of the accepted
     /// characters of no bar at all (3.62 vs 3.81 per case) with ~40% fewer wrong
     /// trailing words; 0.5 made almost every suggestion a single word.
     public var extensionThreshold = 0.2
     /// Hard cap on suggested words (including the first).
     public var maxWords = 4
+    /// Phrases kept alive while searching past the first word (Cotypist: 9). The
+    /// winner is the phrase with the highest total probability.
+    public var beamWidth = 9
+    /// Next tokens considered per phrase at each step.
+    public var beamBranching = 3
+    /// Search only phrases that start with the most likely first word (keeps the
+    /// first word — the one the show gate judges — the model's best guess).
+    public var beamFromBestFirstWord = true
     /// Recommended minimum first-word confidence for showing a suggestion. The
     /// decoder itself never gates — callers compare `CompletionResult.confidence`
     /// against this (tuned on eval seed-v1; see `tabtype-eval sweep`).
@@ -189,6 +198,30 @@ private struct Candidate {
     var stopToken: TokenID?
     var stopLogProbability: Double = 0
     var logits: Logits?
+    /// Next-word starts the beam may take, read when the word ended.
+    var nextChoices: [Choice] = []
+}
+
+private struct Choice { var token: TokenID; var logProbability: Double }
+
+/// One phrase in the beam past the first word.
+private struct Phrase {
+    var sequence: Int
+    /// Position of the next token to feed.
+    var position: Int
+    var logProbability: Double
+    /// Finished words, the first included, as visible bytes.
+    var words: [[UInt8]]
+    var wordLogProbabilities: [Double]
+    var current: [UInt8] = []
+    var currentLogProbability: Double = 0
+    var tokensInWord = 0
+    var proposals: [Choice]
+    var forced: ArraySlice<UInt8>
+    var followsHint: Bool
+    /// Index of its first word in the merged first-word list.
+    var root: Int
+    var trailingSpace = false
 }
 
 private struct Session {
@@ -279,6 +312,7 @@ private struct Session {
                 }
                 if shouldEndWord(candidates[i], before: next.token) {
                     candidates[i].finished = true
+                    candidates[i].nextChoices = wordStarts(candidates[i].logits!, forced: candidates[i].forced)
                     // Only a whitespace-led token starts a next word worth extending into.
                     let startsWord = vocab.startsWithWhitespace(next.token) && !vocab.containsNewline(next.token)
                     candidates[i].stopToken = startsWord ? next.token : nil
@@ -315,67 +349,187 @@ private struct Session {
         merged.sort { ($0.logP + ($0.followsHint ? bonus : 0)) > ($1.logP + ($1.followsHint ? bonus : 0)) }
         guard let best = merged.first else { return nil }
 
-        var winner = candidates[best.index]
+        // Past the first word: beam search over whole phrases (Cotypist's search),
+        // starting from every first word, ranked by total probability.
+        var root = 0
         var words = [WordScore(text: best.text, probability: exp(best.logP))]
-        try extend(&winner, words: &words)
+        var trailingSpace = candidates[best.index].stopToken.map { vocab.pieces[Int($0)].first == 0x20 } ?? false
+        if options.maxWords > 1, options.extensionThreshold <= 1,
+           let phrase = try beam(from: candidates, merged: merged) {
+            root = phrase.root
+            let first = merged[root]
+            words = [WordScore(text: first.text, probability: exp(first.logP))]
+            for (bytes, lp) in zip(phrase.words.dropFirst(), phrase.wordLogProbabilities.dropFirst()) {
+                // Trailing words stay only while each is likely enough given the
+                // ones before it.
+                guard exp(lp) >= options.extensionThreshold else { break }
+                words.append(WordScore(text: String(decoding: bytes, as: UTF8.self), probability: exp(lp)))
+            }
+            trailingSpace = phrase.trailingSpace
+        }
+        let chosen = merged[root]
 
-        let text = words.map(\.text).joined()
         return CompletionResult(
-            text: text,
-            confidence: exp(best.logP),
+            text: words.map(\.text).joined(),
+            confidence: exp(chosen.logP),
             words: words,
-            alternatives: merged.dropFirst().prefix(options.maxAlternatives)
-                .map { WordScore(text: $0.text, probability: exp($0.logP)) },
-            predictedTrailingSpace: winner.stopToken.map { vocab.pieces[Int($0)].first == 0x20 } ?? false,
+            alternatives: merged.enumerated().filter { $0.offset != root }.prefix(options.maxAlternatives)
+                .map { WordScore(text: $0.element.text, probability: exp($0.element.logP)) },
+            predictedTrailingSpace: trailingSpace,
             promptTokens: promptLength,
             generatedTokens: generated,
-            followsHint: best.followsHint)
+            followsHint: chosen.followsHint)
     }
 
-    // MARK: Stage B — extend the winner word by word while confident
+    // MARK: Stage B — beam search over phrases
 
-    mutating func extend(_ c: inout Candidate, words: inout [WordScore]) throws {
-        while words.count < options.maxWords, options.extensionThreshold <= 1 {
-            guard let start = c.stopToken, !vocab.containsNewline(start) else { return }
-            if isCancelled() { throw CancellationError() }
-            var wordBytes = vocab.pieces[Int(start)]
-            var wordLogP = c.stopLogProbability
-            var token = start
-            var tokensInWord = 0
-            c.stopToken = nil
-            // A word that continues the author's own past phrasing gets a gentler
-            // bar: it's both likely under the model and something they've written.
-            let followingHint = !c.forced.isEmpty
-            consumeForced(&c, start)
-            while true {
-                let logits = try model.decode([BatchEntry(token: token, position: promptLength + c.tokens.count,
-                                                          sequence: c.sequence)])[0]
-                c.tokens.append(token)
-                generated += 1
-                tokensInWord += 1
-                let following = c.forced.isEmpty ? nil : forcedChoice(c.forced, logits)
-                guard let next = following ?? greedy(logits) else { break }   // end of generation
-                if vocab.startsWithWhitespace(next.token) || vocab.containsNewline(next.token)
-                    || tokensInWord >= options.maxTokensPerWord {
-                    c.stopToken = next.token
-                    c.stopLogProbability = next.logProbability
-                    break
-                }
-                consumeForced(&c, next.token)
-                wordBytes += vocab.pieces[Int(next.token)]
-                wordLogP += next.logProbability
-                token = next.token
-            }
-            let probability = exp(wordLogP)
-            let bar = followingHint ? options.extensionThreshold * 0.5 : options.extensionThreshold
-            guard probability >= bar else { return }
-            words.append(WordScore(text: String(decoding: wordBytes, as: UTF8.self), probability: probability))
+    /// What may follow a phrase whose word just ended: the best few space-led
+    /// word starts or line breaks (a line break ends the phrase), plus the
+    /// author's own next token when following a hint.
+    mutating func wordStarts(_ logits: Logits, forced: ArraySlice<UInt8>) -> [Choice] {
+        let norm = LogitMath.logSumExp(logits, blocked: nil, scratch: &scratch)
+        var choices = LogitMath.topK(logits, k: options.beamBranching * 2, candidates: nil, blocked: vocab.blocked)
+            .filter { vocab.startsWithWhitespace($0) || vocab.containsNewline($0) }
+            .prefix(options.beamBranching)
+            .map { Choice(token: $0, logProbability: Double(logits.values[Int($0)] - norm)) }
+        if !forced.isEmpty, let f = forcedChoice(forced, logits), !choices.contains(where: { $0.token == f.token }) {
+            choices.append(f)
         }
+        return choices
+    }
+
+    /// The most probable phrase of up to `maxWords` words, or nil when no first
+    /// word can be extended. Phrases share KV state until they branch.
+    mutating func beam(from candidates: [Candidate],
+                       merged: [(text: String, logP: Double, index: Int, followsHint: Bool)]) throws -> Phrase? {
+        var live: [Phrase] = []
+        var done: [Phrase] = []
+        var keep = Set<Int>()
+        for (r, m) in merged.enumerated() {
+            let c = candidates[m.index]
+            if options.beamFromBestFirstWord, r > 0 { continue }
+            keep.insert(c.sequence)
+            let phrase = Phrase(sequence: c.sequence, position: promptLength + c.tokens.count,
+                                logProbability: c.logProbability, words: [Array(visibleBytes(c))],
+                                wordLogProbabilities: [c.logProbability], proposals: c.nextChoices,
+                                forced: c.forced, followsHint: m.followsHint, root: r)
+            // A first word that ended the text (line break, end of generation) is
+            // the whole phrase.
+            if phrase.proposals.isEmpty || c.stopToken == nil { done.append(phrase) } else { live.append(phrase) }
+        }
+        // Candidates that merged into another's text are done with their KV.
+        for c in candidates where !keep.contains(c.sequence) { model.drop(sequence: c.sequence) }
+
+        var steps = 0
+        while !live.isEmpty, steps < options.maxWords * options.maxTokensPerWord {
+            steps += 1
+            if isCancelled() { throw CancellationError() }
+            // Every phrase × its next-token options, best total probability first.
+            var expansions: [(parent: Int, choice: Choice, score: Double)] = []
+            for (i, p) in live.enumerated() {
+                for choice in p.proposals {
+                    let startsWord = vocab.startsWithWhitespace(choice.token)
+                    if vocab.containsNewline(choice.token)
+                        || (startsWord && !p.current.isEmpty && p.words.count + 1 >= options.maxWords)
+                        || (!startsWord && p.tokensInWord >= options.maxTokensPerWord) {
+                        // Ends here: a line break, the word cap, or a runaway word.
+                        var finished = p
+                        finished.logProbability += choice.logProbability
+                        finished.trailingSpace = startsWord
+                        commitWord(&finished)
+                        done.append(finished)
+                        continue
+                    }
+                    expansions.append((i, choice, p.logProbability + choice.logProbability))
+                }
+            }
+            // A phrase's probability only falls as it grows, so nothing scoring
+            // below the best finished phrase can still win — drop it (exact).
+            let bonus = options.hintBonus
+            let bestDone = done.map { $0.logProbability + ($0.followsHint ? bonus : 0) }.max() ?? -.infinity
+            expansions.removeAll { $0.score + (live[$0.parent].followsHint ? bonus : 0) <= bestDone }
+            expansions.sort { $0.score > $1.score }
+            let kept = Array(expansions.prefix(options.beamWidth))
+            // Phrases nothing grows from release their KV (unless finished above,
+            // which no longer need it either).
+            let parents = Set(kept.map(\.parent))
+            for (i, p) in live.enumerated() where !parents.contains(i) { model.drop(sequence: p.sequence) }
+
+            // Children: the first reuses its parent's sequence; the rest branch
+            // into free sequences copied from the parent BEFORE anything is fed.
+            var used = Set(kept.map { live[$0.parent].sequence })
+            var claimed = Set<Int>()
+            var next: [Phrase] = []
+            var entries: [BatchEntry] = []
+            for e in kept {
+                var child = live[e.parent]
+                if claimed.contains(child.sequence) {
+                    guard let free = (1..<model.maxSequences).first(where: { !used.contains($0) }) else { continue }
+                    model.copy(sequence: child.sequence, to: free)
+                    used.insert(free)
+                    if !usedSequences.contains(free) { usedSequences.append(free) }
+                    child.sequence = free
+                }
+                claimed.insert(child.sequence)
+                if vocab.startsWithWhitespace(e.choice.token) { commitWord(&child) }
+                let piece = vocab.pieces[Int(e.choice.token)]
+                child.current += piece
+                child.currentLogProbability += e.choice.logProbability
+                child.logProbability += e.choice.logProbability
+                child.tokensInWord += 1
+                if !child.forced.isEmpty {
+                    child.forced = child.forced.starts(with: piece) ? child.forced.dropFirst(piece.count) : [][...]
+                }
+                entries.append(BatchEntry(token: e.choice.token, position: child.position, sequence: child.sequence))
+                child.position += 1
+                next.append(child)
+            }
+            let logits = try model.decode(entries)
+            generated += entries.count
+            for i in next.indices {
+                let l = logits[i]
+                let norm = LogitMath.logSumExp(l, blocked: nil, scratch: &scratch)
+                // The model wants to stop: the phrase ends with this word.
+                var best: Float = 0
+                var bestIndex: vDSP_Length = 0
+                vDSP_maxvi(l.values.baseAddress!, 1, &best, &bestIndex, vDSP_Length(l.values.count))
+                if vocab.blocked[Int(bestIndex)] {
+                    var finished = next[i]
+                    finished.logProbability += Double(best - norm)
+                    commitWord(&finished)
+                    done.append(finished)
+                    next[i].proposals = []
+                    continue
+                }
+                var choices = LogitMath.topK(l, k: options.beamBranching, candidates: nil, blocked: vocab.blocked)
+                    .map { Choice(token: $0, logProbability: Double(l.values[Int($0)] - norm)) }
+                if !next[i].forced.isEmpty, let f = forcedChoice(next[i].forced, l),
+                   !choices.contains(where: { $0.token == f.token }) {
+                    choices.append(f)
+                }
+                next[i].proposals = choices
+            }
+            live = next.filter { !$0.proposals.isEmpty }
+        }
+        // Out of steps: what's live is as long as it gets.
+        for var p in live { commitWord(&p); done.append(p) }
+        for p in live { model.drop(sequence: p.sequence) }
+        let bonus = options.hintBonus
+        return done.max { ($0.logProbability + ($0.followsHint ? bonus : 0))
+            < ($1.logProbability + ($1.followsHint ? bonus : 0)) }
+    }
+
+    /// Close the word in progress.
+    func commitWord(_ p: inout Phrase) {
+        guard !p.current.isEmpty else { return }
+        p.words.append(p.current)
+        p.wordLogProbabilities.append(p.currentLogProbability)
+        p.current = []
+        p.currentLogProbability = 0
+        p.tokensInWord = 0
     }
 
     // MARK: Steps
-
-    struct Choice { var token: TokenID; var logProbability: Double }
 
     /// The next token for a candidate: constrained to the remaining heal while it
     /// lasts, greedy afterwards. nil when the model wants to end here.
@@ -402,13 +556,6 @@ private struct Session {
         }
         let norm = LogitMath.logSumExp(logits, blocked: nil, scratch: &scratch)
         return Choice(token: token, logProbability: Double(logits.values[Int(token)] - norm))
-    }
-
-    /// Advance the hint past `token`'s bytes (or drop it if they diverge).
-    func consumeForced(_ c: inout Candidate, _ token: TokenID) {
-        guard !c.forced.isEmpty else { return }
-        let piece = vocab.pieces[Int(token)]
-        c.forced = c.forced.starts(with: piece) ? c.forced.dropFirst(piece.count) : [][...]
     }
 
     /// Unconstrained greedy step over the whole vocabulary. nil when the best token
