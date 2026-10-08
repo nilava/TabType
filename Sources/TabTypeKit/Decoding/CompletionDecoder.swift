@@ -8,10 +8,10 @@ public struct DecoderOptions: Sendable, Equatable {
     public var minFirstTokenProbability = 0.02
     /// After the first word, extend the suggestion word by word while each next
     /// word's probability stays at or above this. >1 disables extension.
-    /// Tuned on eval seed-v1 (Qwen3-4B base, 4 words): 0.5 halves the wrong
-    /// trailing words of 0.3 (0.58 → 0.33 per case; fully-right 55 → 67%) for
-    /// ~15% fewer accepted characters.
-    public var extensionThreshold = 0.5
+    /// Eval seed-v1 (Qwen3-4B base, 4 words): 0.2 keeps ~95% of the accepted
+    /// characters of no bar at all (3.62 vs 3.81 per case) with ~40% fewer wrong
+    /// trailing words; 0.5 made almost every suggestion a single word.
+    public var extensionThreshold = 0.2
     /// Hard cap on suggested words (including the first).
     public var maxWords = 4
     /// Recommended minimum first-word confidence for showing a suggestion. The

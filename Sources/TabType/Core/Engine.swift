@@ -32,6 +32,18 @@ final class Engine {
     /// repeated results) — see `SuggestionSession`.
     private var session = SuggestionSession()
     private var currentSuggestion: String? { session.text }
+    /// What comes AFTER the suggestion on screen, computed in the background while
+    /// it's shown: Tab through the last word and the next words appear at once,
+    /// with no wait for the app to publish the insert (Cotypist's "prewarm").
+    private var lookahead: Lookahead?
+    private struct Lookahead {
+        /// The suggestion it continues, and the field text once that's accepted.
+        var after: String
+        var input: String
+        var request: CompletionRequest
+        /// nil while computing; "" when the model had nothing confident.
+        var text: String?
+    }
     private var debounceWork: DispatchWorkItem?
     private var lastFocusedPID: pid_t = 0
     private var lastPredictedPrompt: String = ""
@@ -642,7 +654,7 @@ final class Engine {
         if settings.acceptWordKey.matches(keyCode: keyCode, flags: flags.subtracting(optionPassthrough ? .maskAlternate : [])) {
             if optionPassthrough { clearSuggestion(); return .passthroughStrippingOption }
             if tabDisabled { return .passthrough }
-            return acceptCurrent(whole: settings.acceptWholeLine) ? .swallow : .passthrough
+            return acceptCurrent(whole: false) ? .swallow : .passthrough
         }
         // Dismiss.
         if settings.dismissKey.matches(keyCode: keyCode, flags: flags) {
@@ -752,7 +764,7 @@ final class Engine {
             // Move the ghost past the typed characters right away (their width in
             // the field's font); the settled caret then confirms the position.
             if !overlay.advance(typed: chars, remainder: remainder) { overlay.hide() }
-            presentWhenSettled(suggestion: remainder, isNewSuggestion: false)
+            presentWhenSettled(suggestion: remainder, isNewSuggestion: false, allowWrap: shownAllowWrap)
             return
         }
 
@@ -1251,6 +1263,24 @@ final class Engine {
         // Placement resolves inside the settle gate: presentation waits for a
         // typing pause and reads the caret THEN (mid-burst reads are stale).
         presentWhenSettled(suggestion: suggestion, isNewSuggestion: true, allowWrap: allowWrap)
+        startLookahead(after: suggestion, input: ctxInput, request: req)
+    }
+
+    /// Compute the continuation of `input + suggestion` while `suggestion` is shown.
+    private func startLookahead(after suggestion: String, input: String, request: CompletionRequest) {
+        var ahead = request
+        ahead.beforeCursor = input + suggestion
+        ahead.afterCursor = ""
+        ahead.speculative = true
+        let entry = Lookahead(after: suggestion, input: input + suggestion, request: ahead, text: nil)
+        lookahead = entry
+        let engine = router.current
+        Task { [weak self] in
+            let text = await engine.complete(ahead)
+            guard let self, self.lookahead?.input == entry.input, self.lookahead?.after == suggestion else { return }
+            self.lookahead?.text = text ?? ""
+            if let text { Log.shared.debug("lookahead: after \"\(suggestion)\" → \"\(text)\"") }
+        }
     }
 
     /// Display the suggestion: inline ghost text when we have precise caret bounds,
@@ -1511,19 +1541,34 @@ final class Engine {
         let options = SuggestionSession.AcceptOptions(
             includeTrailingPunctuation: settings.includeTrailingPunctuation,
             includeTrailingSpace: settings.includeTrailingSpace)
+        let accepted = session.text ?? ""
         guard let (toInsert, remainder) = session.accept(whole: whole, options: options) else { return false }
 
-        // Slide the rest of the ghost to where the inserted text will end — no
-        // gap while the app catches up; the settled caret confirms it below.
-        if !overlay.advance(typed: toInsert, remainder: remainder) { overlay.hide() }
+        // Accepting the last word: the lookahead (when ready) is what comes next.
+        var next: String?
+        if remainder.isEmpty, let ahead = lookahead, ahead.after.hasSuffix(accepted),
+           let text = ahead.text, !text.isEmpty {
+            next = text
+            session.register(text, isNew: true)
+            Statistics.shared.recordShown()
+            Log.shared.debug("predict -> \"\(text)\" [lookahead] (0ms)")
+        }
+        let shownNext = next ?? remainder
+        // Slide the rest of the ghost (or the next words) to where the inserted text
+        // will end — no gap while the app catches up; the settled caret confirms it.
+        if shownNext.isEmpty || !overlay.advance(typed: toInsert, remainder: shownNext) { overlay.hide() }
+        if let next, let ahead = lookahead {
+            startLookahead(after: next, input: ahead.input, request: ahead.request)
+        }
         if session.isProtectingRemainder {
             // Tear down the prediction machinery armed by earlier real keystrokes,
             // or it fires on the just-inserted word and replaces the remainder:
             // the host-publish poll (scheduleToken), the debounce, and any
-            // in-flight generation whose stale result would re-kick.
+            // in-flight generation whose stale result would re-kick — but not a
+            // lookahead still computing what follows this suggestion.
             debounceWork?.cancel()
             scheduleToken += 1
-            router.cancelInFlight()
+            if lookahead == nil || lookahead?.text != nil { router.cancelInFlight() }
         }
         buffer += toInsert
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
@@ -1545,9 +1590,16 @@ final class Engine {
             // pre-insert caret and overlaps the inserted text.
             self.markEdit()
             TextInserter.insert(toInsert, strategy: strategy)
+            if let next {
+                // Re-anchor at the settled caret — unless more Tabs already moved on.
+                guard self.currentSuggestion == next else { return }
+                self.presentWhenSettled(suggestion: next, isNewSuggestion: false,
+                                        allowWrap: self.shownAllowWrap, earlyOnCaretMove: false)
+                return
+            }
             if remainder.isEmpty {
-                // Suggestion exhausted — speculatively fetch the next continuation so it
-                // appears sooner than waiting for the next keystroke's debounce.
+                // Suggestion exhausted with no lookahead ready — fetch the next
+                // continuation as soon as the insert lands.
                 guard self.currentSuggestion == nil else { return }
                 self.hostBaselineLen = baselineLen
                 self.hostExpectedLen = baselineLen.map { $0 + toInsert.utf16.count }
@@ -1559,7 +1611,11 @@ final class Engine {
             // things quiet down, so the remaining ghost lands at the new position.
             // A multi-character insert lands key by key: wait the full settle
             // instead of trusting the first caret move.
-            self.presentWhenSettled(suggestion: remainder, isNewSuggestion: false, earlyOnCaretMove: false)
+            // A quicker second Tab already took this remainder further: re-anchoring
+            // it here would resurrect the older, longer text.
+            guard self.currentSuggestion == remainder else { return }
+            self.presentWhenSettled(suggestion: remainder, isNewSuggestion: false,
+                                    allowWrap: self.shownAllowWrap, earlyOnCaretMove: false)
         }
         return true
     }

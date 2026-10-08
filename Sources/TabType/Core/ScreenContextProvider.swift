@@ -79,8 +79,18 @@ final class ScreenContextProvider: ObservableObject {
         }
         guard !capturing, Date().timeIntervalSince(lastCaptureStarted) > minInterval else { return }
         // Mid-burst freeze: while the user is actively typing, snapshots jitter
-        // and thrash the KV cache — wait for the pause.
-        guard Date().timeIntervalSince(lastEditAt) > 1.0 else { return }
+        // and thrash the KV cache — wait for the pause. But never for the FIRST
+        // capture of this window: clicking into a chat and typing straight away
+        // would otherwise leave the whole message without its conversation.
+        if Date().timeIntervalSince(lastEditAt) <= 1.0 {
+            let bid = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            let host = AccessibilityBridge.frontmostURLHost()
+            let title = Self.stableTitle(AccessibilityBridge.focusedElement()
+                .flatMap { ContextReader.windowOf($0) }
+                .flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) })
+            let known = history.contains { $0.bundleId == bid && $0.host == host && $0.windowTitle == title }
+            guard !known else { return }
+        }
         capturing = true
         lastCaptureStarted = Date()
 

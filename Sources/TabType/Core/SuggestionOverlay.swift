@@ -141,21 +141,35 @@ final class SuggestionOverlay {
         let baselineY = baseline ?? Self.defaultBaseline(caret: caretRect, font: font)
         let caretX = caretRect.maxX + 1   // tight against the typed word, like real text
 
+        var text = text
         let originX: CGFloat
         let width: CGFloat
-        let indent: CGFloat
+        var indent: CGFloat
         let maxLines: Int
+        var lineOffset: CGFloat = 0
         if let field = fieldRect, Self.isSaneFieldRect(field, caretRect: caretRect) {
+            // Wrap like the field's own text (Cotypist's layout): line 1 continues
+            // from the caret, later lines start at the paragraph's left edge, across
+            // the field's full width, down to ~100pt below the caret line.
             let left = min(leftX ?? field.minX + 4, caretX)
             let rightInset = max(4, left - field.minX)
             var right = field.maxX - rightInset
             if let maxRightX { right = min(right, maxRightX) }
-            width = min(right - left, 900)
+            width = right - left
+            guard width >= 30 else { hide(); return false }
             indent = caretX - left
-            guard width - indent >= 30 else { hide(); return false }
             let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
-            let linesBelow = max(1, Int((field.maxY - caretRect.minY) / lineHeight))
-            maxLines = min(3, linesBelow)
+            maxLines = max(1, Int((caretRect.height + 100) / lineHeight))
+            // The first word doesn't fit after the caret: real text would break
+            // there, so the ghost starts on the next line.
+            let firstWord = text.drop(while: { $0 == " " }).prefix(while: { $0 != " " })
+            let firstWidth = (String(text.prefix(while: { $0 == " " }) + firstWord) as NSString)
+                .size(withAttributes: [.font: font]).width
+            if indent + firstWidth > width {
+                indent = 0
+                lineOffset = lineHeight
+                text = String(text.drop(while: { $0 == " " }))
+            }
             originX = left
         } else {
             let natural = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
@@ -171,7 +185,7 @@ final class SuggestionOverlay {
                                    firstLineIndent: indent, maxLines: maxLines)
         ghost.frame = CGRect(x: 0, y: 0, width: width, height: laid.height)
         ghost.isHidden = false
-        let top = baselineY - laid.firstBaseline
+        let top = baselineY + lineOffset - laid.firstBaseline
         let flippedY = NSScreen.primaryHeight - (top + laid.height)
         panel.setFrame(CGRect(x: originX, y: flippedY, width: width, height: laid.height),
                        display: true)

@@ -67,11 +67,15 @@ final class LlamaEngine {
         // A phrase the author has used repeatedly earns a lower bar (eval: +13%
         // accepted characters, fewer wrong suggestions on a repeat-writer set).
         let threshold = (result.followsHint && hintSupport >= 2) ? options.showThreshold * 0.5 : options.showThreshold
+        // Lookahead (speculative) results stay out of the statistics.
+        let quiet = request.speculative
         guard result.confidence >= threshold else {
+            if quiet { return nil }
             Log.shared.debug("v2: \"\(result.text)\" below threshold (conf \(String(format: "%.2f", result.confidence)) < \(options.showThreshold)) \(ms)ms\(cached ? " [cached]" : "")")
             Statistics.shared.record(.belowConfidence)
             return nil
         }
+        if quiet { return result.text }
         Statistics.shared.recordLatency(ms: ms)
         Log.shared.debug("v2: \"\(result.text)\" conf \(String(format: "%.2f", result.confidence))\(result.followsHint ? " · from your writing" : "") · \(result.promptTokens) prompt tokens · \(ms)ms\(cached ? " [cached]" : "")")
         return result.text

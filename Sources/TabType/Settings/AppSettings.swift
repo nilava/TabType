@@ -19,8 +19,6 @@ final class AppSettings: ObservableObject {
     @Published var isEnabled: Bool { didSet { defaults.set(isEnabled, forKey: Keys.isEnabled) } }
     /// Max words shown per suggestion (display cap — the main "length" knob).
     @Published var maxWords: Int { didSet { defaults.set(maxWords, forKey: Keys.maxWords) } }
-    /// Accept the whole suggestion on Tab (true) or one word at a time (false).
-    @Published var acceptWholeLine: Bool { didSet { defaults.set(acceptWholeLine, forKey: Keys.acceptWholeLine) } }
     /// Ghost-text opacity, 0.15–1.0.
     @Published var ghostOpacity: Double { didSet { defaults.set(ghostOpacity, forKey: Keys.ghostOpacity) } }
 
@@ -79,9 +77,13 @@ final class AppSettings: ObservableObject {
         }
     }
     static func words(for length: String) -> Int {
-        // Eval (seed-v1, Qwen3-4B base): past ~4 words, extra words are mostly
-        // wrong ones on screen (8 → 4 words: same characters saved, fewer wrong).
-        switch length { case "short": return 2; case "long": return 8; default: return 4 }
+        // Cotypist's steps; medium is the recommended default.
+        switch length {
+        case "short": return 2
+        case "long": return 7
+        case "verylong": return 10
+        default: return 4
+        }
     }
 
     // MARK: Personalization
@@ -123,7 +125,6 @@ final class AppSettings: ObservableObject {
         isEnabled = defaults.object(forKey: Keys.isEnabled) as? Bool ?? true
         // The length setting is the source of truth (older builds stored 8 here).
         maxWords = AppSettings.words(for: defaults.string(forKey: Keys.completionLength) ?? "medium")
-        acceptWholeLine = defaults.object(forKey: Keys.acceptWholeLine) as? Bool ?? false
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
         // Settings that only the removed v1 (MLX / Apple Intelligence) engine used.
         for key in Keys.retiredV1 { defaults.removeObject(forKey: key) }
@@ -198,8 +199,7 @@ final class AppSettings: ObservableObject {
                                 // Tuning knobs removed in v2.1 (they only got in the way).
                                 "debounceMs", "continuousGeneration", "contextChars", "screenCropMode",
                                 "textMirroring", "batteryOnDemandOnly", "batteryUseDebounce",
-                                "batteryShorterCompletions", "llamaAdapter"]
-        static let acceptWholeLine = "acceptWholeLine"
+                                "batteryShorterCompletions", "llamaAdapter", "acceptWholeLine"]
         static let ghostOpacity = "ghostOpacity"
         static let useScreenContext = "useScreenContext"
         static let useClipboardContext = "useClipboardContext"

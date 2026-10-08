@@ -135,15 +135,11 @@ struct GeneralSettingsView: View {
             }
 
             Section("Accepting") {
-                Picker("On Tab, insert", selection: $settings.acceptWholeLine) {
-                    Text("One word at a time").tag(false)
-                    Text("The whole suggestion").tag(true)
-                }
-                .pickerStyle(.radioGroup)
                 Picker("Completion length", selection: $settings.completionLength) {
                     Text("Short (1–2 words)").tag("short")
-                    Text("Medium (up to 4 words)").tag("medium")
-                    Text("Long (up to 8 words)").tag("long")
+                    Text("Medium (2–4 words)").tag("medium")
+                    Text("Long (4–7 words)").tag("long")
+                    Text("Very long (7–10 words)").tag("verylong")
                 }
             }
 
