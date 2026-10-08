@@ -403,6 +403,11 @@ private struct AppOverrideDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Troubleshooting") {
+                Toggle("Preview suggestions in a mirror", isOn: Binding(
+                    get: { override.textMirror ?? false },
+                    set: { override.textMirror = $0 ? true : nil }))
+                Text("If suggestions can't be shown in line with the cursor in this app, TabType previews them in a small floating mirror of the line you're typing.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Improve compatibility with this app", isOn: $override.improveCompatibility)
                 Text("If completions don't appear reliably in this app, try turning this on — it switches to clipboard-paste insertion.")
                     .font(.caption).foregroundStyle(.secondary)

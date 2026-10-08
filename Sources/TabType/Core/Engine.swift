@@ -1448,6 +1448,24 @@ final class Engine {
         }
         if isNewSuggestion { Statistics.shared.recordShown() }
         shownAllowWrap = allowWrap
+        // Text mirror (per-app opt-in): preview the line + suggestion in a
+        // floating mirror instead of placing ghost text in the field.
+        if policy.textMirror {
+            let element = AccessibilityBridge.focusedElement()
+            let anchor = element.flatMap { AccessibilityBridge.elementFrame(of: $0) }
+                ?? inlineCaret.map { CGRect(x: $0.minX - 200, y: $0.minY, width: 400, height: $0.height) }
+                ?? windowRect.map { CGRect(x: $0.minX + 40, y: $0.maxY - 120, width: $0.width - 80, height: 40) }
+            let before = expectedInput
+                ?? element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
+            let line = String(before.split(separator: "\n", omittingEmptySubsequences: false).last ?? "")
+            if let anchor {
+                overlay.showMirror(typedTail: line, suggestion: suggestion, fieldRect: anchor,
+                                   opacity: settings.ghostOpacity)
+            } else {
+                overlay.showHUD(text: suggestion, windowRect: windowRect)
+            }
+            return
+        }
         if let caretRect = inlineCaret {
             // The field's own font and text colour, as the app reports them over AX
             // (AXFont / AXForegroundColor); a caret-height guess only when it doesn't.

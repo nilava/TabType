@@ -37,6 +37,9 @@ struct AppPolicy {
     var fontFactor: Double = 1.0
     /// Ghost-text vertical nudge in points.
     var verticalOffset: Double = 0
+    /// Suggestions appear in a floating mirror of the line (Cotypist's text
+    /// mirroring) — for apps where inline ghost text can't be placed reliably.
+    var textMirror: Bool = false
     /// Font-size-from-caret-height ratio, used only when the field's real AX font
     /// can't be read (common for web/Electron content). Web/Electron caret rects are
     /// padded CSS line boxes, so a tight-line-box ratio (0.72) undersizes the ghost;
@@ -146,12 +149,15 @@ struct AppOverride: Codable, Equatable {
     var ghostVerticalOffset: Double?
     /// Learn from what's written in this app; nil = follow the global setting.
     var learnFromWriting: Bool?
+    /// Show suggestions in a floating mirror of the line instead of inline.
+    var textMirror: Bool?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
             && disableTabKey == nil && !improveCompatibility && customInstructions.isEmpty
             && readConversation == nil && contextSize == nil
             && ghostFontScale == nil && ghostVerticalOffset == nil && learnFromWriting == nil
+            && textMirror == nil
     }
 }
 
@@ -281,6 +287,7 @@ enum AppPolicyStore {
             policy.customInstructions = o.customInstructions
             if let scale = o.ghostFontScale { policy.fontFactor *= scale }
             if let offset = o.ghostVerticalOffset { policy.verticalOffset += offset }
+            if let mirror = o.textMirror { policy.textMirror = mirror }
             applyContextOverrides(o, to: &policy)
         }
         return policy

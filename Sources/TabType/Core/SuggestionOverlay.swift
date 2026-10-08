@@ -63,6 +63,9 @@ final class SuggestionOverlay {
     /// The inline ghost (the HUD and bubble use `label`).
     private let ghost = GhostTextView(frame: .zero)
     private let background = NSVisualEffectView()
+    /// Text mirror: a blinking caret between the typed tail and the suggestion.
+    private let mirrorCaret = NSView()
+    private var caretBlink: Timer?
 
     init() {
         let panel = NSPanel(
@@ -102,6 +105,10 @@ final class SuggestionOverlay {
         container.addSubview(label)
         container.addSubview(ghost)
         ghost.isHidden = true
+        mirrorCaret.wantsLayer = true
+        mirrorCaret.layer?.backgroundColor = NSColor.labelColor.cgColor
+        mirrorCaret.isHidden = true
+        container.addSubview(mirrorCaret)
         panel.contentView = container
         self.panel = panel
     }
@@ -136,6 +143,8 @@ final class SuggestionOverlay {
                                      baseline: baseline)
         background.isHidden = true
         label.isHidden = true
+        caretBlink?.invalidate()
+        mirrorCaret.isHidden = true
 
         let ghostColor = (color ?? NSColor.secondaryLabelColor).withAlphaComponent(opacity)
         let baselineY = baseline ?? Self.defaultBaseline(caret: caretRect, font: font)
@@ -243,6 +252,8 @@ final class SuggestionOverlay {
         background.isHidden = false
         label.isHidden = false
         ghost.isHidden = true
+        caretBlink?.invalidate()
+        mirrorCaret.isHidden = true
 
         label.stringValue = "\(text)   ⇥ Tab"
         label.font = .systemFont(ofSize: 13, weight: .medium)
@@ -282,6 +293,8 @@ final class SuggestionOverlay {
         background.isHidden = false
         label.isHidden = false
         ghost.isHidden = true
+        caretBlink?.invalidate()
+        mirrorCaret.isHidden = true
 
         label.maximumNumberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
@@ -307,7 +320,65 @@ final class SuggestionOverlay {
         panel.orderFrontRegardless()
     }
 
+    // MARK: Text mirror (per-app opt-in)
+
+    /// Cotypist's text mirror, for apps where inline ghost text can't be placed:
+    /// a floating copy of the end of the line being typed, a blinking caret, then
+    /// the suggestion — just below the input field (above it near the screen's
+    /// bottom). `fieldRect` is AX top-left global.
+    func showMirror(typedTail: String, suggestion: String, fieldRect: CGRect, opacity: Double) {
+        guard let panel, !suggestion.isEmpty else { hide(); return }
+        lastInline = nil
+        background.isHidden = false
+        ghost.isHidden = true
+        label.isHidden = false
+
+        let font = NSFont.systemFont(ofSize: 14)
+        let tail = String(typedTail.suffix(48))
+        let attributed = NSMutableAttributedString(string: tail, attributes: [
+            .font: font, .foregroundColor: NSColor.labelColor])
+        attributed.append(NSAttributedString(string: suggestion, attributes: [
+            .font: font, .foregroundColor: NSColor.labelColor.withAlphaComponent(max(opacity, 0.35))]))
+        label.attributedStringValue = attributed
+        label.maximumNumberOfLines = 2
+        label.lineBreakMode = .byTruncatingTail
+
+        let hPad: CGFloat = 12, vPad: CGFloat = 8
+        let width = min(max(fieldRect.width, 240), 640)
+        label.preferredMaxLayoutWidth = width - hPad * 2
+        let textHeight = ceil(label.sizeThatFits(NSSize(width: width - hPad * 2, height: 200)).height)
+        let height = textHeight + vPad * 2
+        background.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        label.frame = CGRect(x: hPad, y: vPad, width: width - hPad * 2, height: textHeight)
+
+        // Caret right after the typed tail (single-line case; on wrap, at the end
+        // of the tail's own width modulo the line).
+        let tailWidth = ceil((tail as NSString).size(withAttributes: [.font: font]).width)
+        let lineWidth = width - hPad * 2
+        let caretX = hPad + tailWidth.truncatingRemainder(dividingBy: max(lineWidth, 1))
+        let line = font.ascender + abs(font.descender) + font.leading
+        let caretLine = floor(tailWidth / max(lineWidth, 1))
+        mirrorCaret.frame = CGRect(x: caretX, y: height - vPad - line * (caretLine + 1) + 1, width: 1.5, height: line - 2)
+        mirrorCaret.isHidden = false
+        caretBlink?.invalidate()
+        caretBlink = Timer.scheduledTimer(withTimeInterval: 0.53, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.mirrorCaret.isHidden.toggle() }
+        }
+
+        let primaryH = NSScreen.primaryHeight
+        var topLeftY = fieldRect.maxY + 6
+        if let screen = NSScreen.main, primaryH - (topLeftY + height) < screen.visibleFrame.minY {
+            topLeftY = fieldRect.minY - height - 6   // no room below: above the field
+        }
+        panel.setFrame(CGRect(x: fieldRect.minX, y: primaryH - (topLeftY + height), width: width, height: height),
+                       display: true)
+        panel.orderFrontRegardless()
+    }
+
     func hide() {
+        caretBlink?.invalidate()
+        caretBlink = nil
+        mirrorCaret.isHidden = true
         lastInline = nil
         panel?.orderOut(nil)
         label.stringValue = ""
