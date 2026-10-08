@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 import AppKit
 @testable import TabType
 
@@ -194,5 +195,23 @@ final class UpdaterTests: XCTestCase {
         let notes = "Install…\n\n**SHA-256** `9509A310CE630535FCCF24B5341A454C3FB7760B58AFC5440867B7AA686D7BB5`\n"
         XCTAssertEqual(Updater.sha256(inNotes: notes), "9509a310ce630535fccf24b5341a454c3fb7760b58afc5440867b7aa686d7bb5")
         XCTAssertNil(Updater.sha256(inNotes: "no checksum here"))
+    }
+}
+
+final class SyncCryptoTests: XCTestCase {
+    func testPassphraseKeyIsDeterministicPerSalt() throws {
+        let salt = Data(repeating: 7, count: 16)
+        let a = try SyncManager.key(passphrase: "correct horse battery", salt: salt)
+        let b = try SyncManager.key(passphrase: "correct horse battery", salt: salt)
+        let c = try SyncManager.key(passphrase: "correct horse battery", salt: Data(repeating: 8, count: 16))
+        let d = try SyncManager.key(passphrase: "another passphrase", salt: salt)
+        let raw: (SymmetricKey) -> Data = { $0.withUnsafeBytes { Data($0) } }
+        XCTAssertEqual(raw(a), raw(b))
+        XCTAssertNotEqual(raw(a), raw(c))
+        XCTAssertNotEqual(raw(a), raw(d))
+        // A payload sealed on one Mac opens on another with the same passphrase only.
+        let sealed = try AES.GCM.seal(Data("hello".utf8), using: a).combined!
+        XCTAssertEqual(try AES.GCM.open(AES.GCM.SealedBox(combined: sealed), using: b), Data("hello".utf8))
+        XCTAssertThrowsError(try AES.GCM.open(AES.GCM.SealedBox(combined: sealed), using: d))
     }
 }

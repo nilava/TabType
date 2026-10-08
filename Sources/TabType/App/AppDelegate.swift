@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         startSecureInputWatch()
         // Updates from GitHub Releases: at launch and then daily (Settings ▸ About).
         Updater.shared.checkIfDue()
+        SyncManager.shared.start()   // no-op unless sync between Macs is on
         Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
             MainActor.assumeIsolated { Updater.shared.checkIfDue() }
         }

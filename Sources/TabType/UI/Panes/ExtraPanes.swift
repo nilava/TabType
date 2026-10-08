@@ -226,11 +226,39 @@ private struct KeyRecorder: NSViewRepresentable {
 }
 
 /// Author name / voice / custom instructions that shape suggestions to sound like you.
+/// Sync between Macs (iCloud Drive, end-to-end encrypted with a passphrase).
+struct SyncSection: View {
+    @ObservedObject private var sync = SyncManager.shared
+    @State private var passphrase = ""
+
+    var body: some View {
+        Section("Sync between Macs") {
+            Toggle("Sync settings and learned writing via iCloud Drive", isOn: Binding(
+                get: { sync.enabled }, set: { sync.enabled = $0 }))
+            if sync.enabled {
+                HStack {
+                    SecureField(sync.hasPassphrase ? "Passphrase set — enter a new one to change it" : "Sync passphrase",
+                                text: $passphrase)
+                    Button("Save") { sync.setPassphrase(passphrase); passphrase = "" }
+                        .disabled(passphrase.count < 8)
+                    Button("Sync Now") { sync.syncNow() }
+                }
+                if !sync.status.isEmpty {
+                    Text(sync.status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text("End-to-end encrypted: everything is sealed with a key made from your passphrase before it reaches iCloud Drive. Use the same passphrase on each Mac. The passphrase is kept in this Mac's keychain only.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct PersonalizationPane: View {
     @EnvironmentObject var settings: AppSettings
 
     var body: some View {
         Form {
+            SyncSection()
             Section("Learn from your writing") {
                 Toggle("Learn from what I write", isOn: $settings.collectTypingHistory)
                 Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")

@@ -24,6 +24,8 @@ final class WritingStore: ObservableObject {
     @Published private(set) var characterCount = 0
     /// Fires (debounced by the caller) when the stored writing changed.
     var onChange: (() -> Void)?
+    /// Sync between Macs wants to hear about new writing.
+    var onSyncNeeded: (() -> Void)?
 
     private var documents: [Document] = []
     private let maxCharacters = 1_000_000
@@ -63,6 +65,28 @@ final class WritingStore: ObservableObject {
         persist()
     }
 
+    /// Everything stored (for sync between Macs).
+    var allDocuments: [Document] { documents }
+
+    /// Merge writing from another Mac: union by key, the newer version wins.
+    func merge(_ incoming: [Document]) {
+        var changed = false
+        for doc in incoming {
+            if let i = documents.firstIndex(where: { $0.key == doc.key }) {
+                if doc.updated > documents[i].updated, doc.text != documents[i].text {
+                    documents[i] = doc
+                    changed = true
+                }
+            } else {
+                documents.append(doc)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        trim()
+        persist()
+    }
+
     func eraseAll() {
         documents.removeAll()
         try? FileManager.default.removeItem(at: fileURL)
@@ -92,6 +116,7 @@ final class WritingStore: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? sealed.write(to: fileURL, options: .atomic)
         onChange?()
+        onSyncNeeded?()
     }
 
     private func load() {
