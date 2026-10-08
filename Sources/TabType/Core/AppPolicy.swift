@@ -144,12 +144,14 @@ struct AppOverride: Codable, Equatable {
     var ghostFontScale: Double?
     /// Ghost text vertical nudge in points (+ = down); nil = default.
     var ghostVerticalOffset: Double?
+    /// Learn from what's written in this app; nil = follow the global setting.
+    var learnFromWriting: Bool?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
             && disableTabKey == nil && !improveCompatibility && customInstructions.isEmpty
             && readConversation == nil && contextSize == nil
-            && ghostFontScale == nil && ghostVerticalOffset == nil
+            && ghostFontScale == nil && ghostVerticalOffset == nil && learnFromWriting == nil
     }
 }
 

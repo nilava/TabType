@@ -1,0 +1,2214 @@
+{
+  "backend" : "llama-decoder/base+history",
+  "date" : "2026-10-08T08:22:18Z",
+  "model" : "Qwen3-4B-Base.i1-Q4_K_M",
+  "results" : [
+    {
+      "category" : "chat",
+      "confidence" : 0.13355489040588242,
+      "id" : "0-boundary-11",
+      "kind" : "boundary",
+      "latencyMs" : 140.182042,
+      "score" : {
+        "acceptedChars" : 11,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "take a look",
+      "truth" : "take a look at the gate pass flow after standup and push the fix to staging by e"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8226293391203635,
+      "id" : "0-boundary-26",
+      "kind" : "boundary",
+      "latencyMs" : 47.7345,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "it",
+      "truth" : "the gate pass flow after standup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9873077212797312,
+      "id" : "0-boundary-35",
+      "kind" : "boundary",
+      "latencyMs" : 76.412958,
+      "score" : {
+        "acceptedChars" : 9,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "pass flow and get",
+      "truth" : "pass flow after standup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.5609555804048937,
+      "id" : "0-boundary-45",
+      "kind" : "boundary",
+      "latencyMs" : 87.515417,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "and",
+      "truth" : "after standup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2751516359047014,
+      "id" : "0-midword-55",
+      "kind" : "midword",
+      "latencyMs" : 54.184958,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "dup",
+      "truth" : "dup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2127288090165789,
+      "id" : "0-midword-65",
+      "kind" : "midword",
+      "latencyMs" : 88.83325,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "sh the",
+      "truth" : "sh the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.23721657459159579,
+      "id" : "1-boundary-7",
+      "kind" : "boundary",
+      "latencyMs" : 90.013125,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "have fixed it",
+      "truth" : "pushed the fix to staging this morning. Let me know if that works for the societ"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2488356599266684,
+      "id" : "1-boundary-33",
+      "kind" : "boundary",
+      "latencyMs" : 89.224,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "and",
+      "truth" : "this morning. Let me know if that works for the society admins."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8681772941694275,
+      "id" : "1-boundary-59",
+      "kind" : "boundary",
+      "latencyMs" : 62.28075,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "if",
+      "truth" : "if that works for the society admins."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.10259088921196546,
+      "id" : "1-boundary-89",
+      "kind" : "boundary",
+      "latencyMs" : 48.345584,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "admins."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.20451180215902312,
+      "id" : "1-midword-64",
+      "kind" : "midword",
+      "latencyMs" : 79.726417,
+      "score" : {
+        "acceptedChars" : 12,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "at works for",
+      "truth" : "at works for the society admins."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.561977230343355,
+      "id" : "1-midword-93",
+      "kind" : "midword",
+      "latencyMs" : 62.227584,
+      "score" : {
+        "acceptedChars" : 1,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "n",
+      "truth" : "ns."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.13970641028627123,
+      "id" : "2-boundary-36",
+      "kind" : "boundary",
+      "latencyMs" : 100.075125,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "after lunch and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.44542291421793123,
+      "id" : "2-boundary-61",
+      "kind" : "boundary",
+      "latencyMs" : 75.916083,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "fix to",
+      "truth" : "fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2690596055598883,
+      "id" : "2-boundary-68",
+      "kind" : "boundary",
+      "latencyMs" : 60.712583,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.03733341188080519,
+      "id" : "2-boundary-76",
+      "kind" : "boundary",
+      "latencyMs" : 92.376167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9732089798250958,
+      "id" : "2-midword-39",
+      "kind" : "midword",
+      "latencyMs" : 90.785875,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "er",
+      "truth" : "er lunch and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8973430745217017,
+      "id" : "2-midword-45",
+      "kind" : "midword",
+      "latencyMs" : 63.286416,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ch",
+      "truth" : "ch and push the fix to staging by evening."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.36180454150726127,
+      "id" : "3-boundary-30",
+      "kind" : "boundary",
+      "latencyMs" : 129.746417,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "staging now. Please test the gate pass and visitor log flows and let me know if "
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.22076713515410995,
+      "id" : "3-boundary-43",
+      "kind" : "boundary",
+      "latencyMs" : 89.059584,
+      "score" : {
+        "acceptedChars" : 11,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "Please test",
+      "truth" : "Please test the gate pass and visitor log flows and let me know if that works fo"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.16277664698546657,
+      "id" : "3-boundary-50",
+      "kind" : "boundary",
+      "latencyMs" : 52.231875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "test the gate pass and visitor log flows and let me know if that works for you.\n"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.7425871427123504,
+      "id" : "3-boundary-107",
+      "kind" : "boundary",
+      "latencyMs" : 75.549916,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "if",
+      "truth" : "if that works for you.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.2353018637308552,
+      "id" : "3-midword-66",
+      "kind" : "midword",
+      "latencyMs" : 65.322833,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "nel",
+      "truth" : "ss and visitor log flows and let me know if that works for you.\n\nBest regards,\nN"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.08823803184415517,
+      "id" : "3-midword-137",
+      "kind" : "midword",
+      "latencyMs" : 132.422958,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "egards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.23947276922810368,
+      "id" : "4-boundary-66",
+      "kind" : "boundary",
+      "latencyMs" : 130.247583,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "I",
+      "truth" : "We will review it with finance this week and get back to you.\n\nBest regards,\nNil"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.22080545675002897,
+      "id" : "4-boundary-69",
+      "kind" : "boundary",
+      "latencyMs" : 51.9335,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "are",
+      "truth" : "will review it with finance this week and get back to you.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.5774798076139325,
+      "id" : "4-boundary-89",
+      "kind" : "boundary",
+      "latencyMs" : 61.457875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "our",
+      "truth" : "finance this week and get back to you.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.7780227989395279,
+      "id" : "4-boundary-102",
+      "kind" : "boundary",
+      "latencyMs" : 73.637667,
+      "score" : {
+        "acceptedChars" : 8,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "week and",
+      "truth" : "week and get back to you.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.41313802358544166,
+      "id" : "4-midword-5",
+      "kind" : "midword",
+      "latencyMs" : 60.235917,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "chel",
+      "truth" : "mesh,\n\nThanks for the quick turnaround on the revised quote. We will review it w"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.9998588661614892,
+      "id" : "4-midword-116",
+      "kind" : "midword",
+      "latencyMs" : 101.96675,
+      "score" : {
+        "acceptedChars" : 10,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ack to you",
+      "truth" : "ack to you.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.04493393627479279,
+      "id" : "5-boundary-13",
+      "kind" : "boundary",
+      "latencyMs" : 126.51225,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "let's move the sync to Thursday afternoon. Let me know if that works for everyon"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.1813647879193185,
+      "id" : "5-boundary-19",
+      "kind" : "boundary",
+      "latencyMs" : 60.7815,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "move the sync to Thursday afternoon. Let me know if that works for everyone."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.5049662019962737,
+      "id" : "5-boundary-33",
+      "kind" : "boundary",
+      "latencyMs" : 128.751375,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "to",
+      "truth" : "to Thursday afternoon. Let me know if that works for everyone."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.1134949677105595,
+      "id" : "5-boundary-56",
+      "kind" : "boundary",
+      "latencyMs" : 101.95325,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Let me know if that works for everyone."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2243961616027724,
+      "id" : "5-midword-2",
+      "kind" : "midword",
+      "latencyMs" : 89.070166,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "rry,",
+      "truth" : "unds good, let's move the sync to Thursday afternoon. Let me know if that works "
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9982220261970146,
+      "id" : "5-midword-79",
+      "kind" : "midword",
+      "latencyMs" : 105.699167,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ks for",
+      "truth" : "ks for everyone."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.12947917397615802,
+      "id" : "6-boundary-21",
+      "kind" : "boundary",
+      "latencyMs" : 103.802709,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "testing the visitor log on staging. I'll ping them after standup."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2500569875822603,
+      "id" : "6-boundary-29",
+      "kind" : "boundary",
+      "latencyMs" : 65.295375,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "the visitor log on staging. I'll ping them after standup."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.16924285338820746,
+      "id" : "6-boundary-45",
+      "kind" : "boundary",
+      "latencyMs" : 48.130417,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "on staging. I'll ping them after standup."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.313134247151835,
+      "id" : "6-boundary-48",
+      "kind" : "boundary",
+      "latencyMs" : 51.232083,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "staging. I'll ping them after standup."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.45385649888943486,
+      "id" : "6-midword-52",
+      "kind" : "midword",
+      "latencyMs" : 88.245416,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ing",
+      "truth" : "ing. I'll ping them after standup."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.08107747642434444,
+      "id" : "6-midword-80",
+      "kind" : "midword",
+      "latencyMs" : 65.150791,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "andup."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.056769433090497194,
+      "id" : "7-boundary-3",
+      "kind" : "boundary",
+      "latencyMs" : 96.215291,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Anjali,\n\nI would like to take leave on Friday for a family function. I have hand"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.40811749011923154,
+      "id" : "7-boundary-28",
+      "kind" : "boundary",
+      "latencyMs" : 89.469042,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "request a leave from",
+      "truth" : "take leave on Friday for a family function. I have handed over the gate pass wor"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.09620331835099487,
+      "id" : "7-boundary-42",
+      "kind" : "boundary",
+      "latencyMs" : 113.85825,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Friday for a family function. I have handed over the gate pass work to Kabir.\n\nB"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.2521244629713052,
+      "id" : "7-boundary-72",
+      "kind" : "boundary",
+      "latencyMs" : 89.259208,
+      "score" : {
+        "acceptedChars" : 1,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "I will be back",
+      "truth" : "I have handed over the gate pass work to Kabir.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.9907617785660464,
+      "id" : "7-midword-30",
+      "kind" : "midword",
+      "latencyMs" : 67.190333,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ke a leave from",
+      "truth" : "ke leave on Friday for a family function. I have handed over the gate pass work "
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.060627242510070914,
+      "id" : "7-midword-131",
+      "kind" : "midword",
+      "latencyMs" : 156.405875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "ds,\nNilava"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.1979419458335892,
+      "id" : "8-boundary-5",
+      "kind" : "boundary",
+      "latencyMs" : 89.363958,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "take a look at the login issue right away and push the fix to staging once it's "
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9787149017724762,
+      "id" : "8-boundary-12",
+      "kind" : "boundary",
+      "latencyMs" : 49.7885,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "look",
+      "truth" : "look at the login issue right away and push the fix to staging once it's verifie"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2182742075446959,
+      "id" : "8-boundary-51",
+      "kind" : "boundary",
+      "latencyMs" : 88.926167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "see if I can",
+      "truth" : "push the fix to staging once it's verified."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.4016362072679267,
+      "id" : "8-boundary-56",
+      "kind" : "boundary",
+      "latencyMs" : 65.008292,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "a fix",
+      "truth" : "the fix to staging once it's verified."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9882233516514874,
+      "id" : "8-midword-71",
+      "kind" : "midword",
+      "latencyMs" : 51.376791,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ing",
+      "truth" : "ing once it's verified."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.893091964536627,
+      "id" : "8-midword-76",
+      "kind" : "midword",
+      "latencyMs" : 91.702375,
+      "score" : {
+        "acceptedChars" : 8,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "nce it's",
+      "truth" : "nce it's verified."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.11458754440052807,
+      "id" : "9-boundary-13",
+      "kind" : "boundary",
+      "latencyMs" : 84.98975,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "let's meet at 8. Let me know if that works for you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.130396662407257,
+      "id" : "9-boundary-27",
+      "kind" : "boundary",
+      "latencyMs" : 102.017417,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "8. Let me know if that works for you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8673282243261774,
+      "id" : "9-boundary-34",
+      "kind" : "boundary",
+      "latencyMs" : 88.923666,
+      "score" : {
+        "acceptedChars" : 10,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "me know if you",
+      "truth" : "me know if that works for you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.6677681037466474,
+      "id" : "9-boundary-42",
+      "kind" : "boundary",
+      "latencyMs" : 61.258084,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "if",
+      "truth" : "if that works for you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9888945990989054,
+      "id" : "9-midword-21",
+      "kind" : "midword",
+      "latencyMs" : 80.8435,
+      "score" : {
+        "acceptedChars" : 5,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "et at",
+      "truth" : "et at 8. Let me know if that works for you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9993154962204943,
+      "id" : "9-midword-39",
+      "kind" : "midword",
+      "latencyMs" : 78.235458,
+      "score" : {
+        "acceptedChars" : 5,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ow if you",
+      "truth" : "ow if that works for you."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.15252505415917678,
+      "id" : "10-boundary-40",
+      "kind" : "boundary",
+      "latencyMs" : 156.562875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "live on the app. Residents can use the gate pass and visitor log from today.\n\nBe"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.2799773719535178,
+      "id" : "10-boundary-48",
+      "kind" : "boundary",
+      "latencyMs" : 73.714833,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "the app. Residents can use the gate pass and visitor log from today.\n\nBest regar"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.22527471936487772,
+      "id" : "10-boundary-71",
+      "kind" : "boundary",
+      "latencyMs" : 62.258167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "now",
+      "truth" : "use the gate pass and visitor log from today.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.34245623707100403,
+      "id" : "10-boundary-101",
+      "kind" : "boundary",
+      "latencyMs" : 63.080875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "pass",
+      "truth" : "log from today.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.4722000407996209,
+      "id" : "10-midword-7",
+      "kind" : "midword",
+      "latencyMs" : 83.367083,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "am",
+      "truth" : "am,\n\nThe Bellevue society is now live on the app. Residents can use the gate pas"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.31814123732003663,
+      "id" : "10-midword-95",
+      "kind" : "midword",
+      "latencyMs" : 122.633875,
+      "score" : {
+        "acceptedChars" : 5,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "sitor",
+      "truth" : "sitor log from today.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.1003396512176153,
+      "id" : "11-boundary-5",
+      "kind" : "boundary",
+      "latencyMs" : 102.81125,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "share the roadmap doc after standup. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.5097787178769467,
+      "id" : "11-boundary-23",
+      "kind" : "boundary",
+      "latencyMs" : 62.090125,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "doc",
+      "truth" : "doc after standup. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.34328154745979156,
+      "id" : "11-boundary-27",
+      "kind" : "boundary",
+      "latencyMs" : 52.099833,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "with you",
+      "truth" : "after standup. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.7265801276132566,
+      "id" : "11-boundary-54",
+      "kind" : "boundary",
+      "latencyMs" : 62.934833,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "if",
+      "truth" : "if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8501223112576126,
+      "id" : "11-midword-7",
+      "kind" : "midword",
+      "latencyMs" : 65.193667,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "are",
+      "truth" : "are the roadmap doc after standup. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9873214789699166,
+      "id" : "11-midword-8",
+      "kind" : "midword",
+      "latencyMs" : 63.501958,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "re",
+      "truth" : "re the roadmap doc after standup. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2736127513119389,
+      "id" : "12-boundary-21",
+      "kind" : "boundary",
+      "latencyMs" : 163.024792,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "Priya.",
+      "truth" : "I'll take a look at the amenity booking crash after lunch and push the fix to st"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9229896547709258,
+      "id" : "12-boundary-31",
+      "kind" : "boundary",
+      "latencyMs" : 74.237917,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "a look",
+      "truth" : "a look at the amenity booking crash after lunch and push the fix to staging by e"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.6238866991190805,
+      "id" : "12-boundary-53",
+      "kind" : "boundary",
+      "latencyMs" : 75.638917,
+      "score" : {
+        "acceptedChars" : 7,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "booking",
+      "truth" : "booking crash after lunch and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.29249125034061835,
+      "id" : "12-boundary-73",
+      "kind" : "boundary",
+      "latencyMs" : 75.297375,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "lunch and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.5183391749904083,
+      "id" : "12-midword-63",
+      "kind" : "midword",
+      "latencyMs" : 37.590208,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "ashes",
+      "truth" : "ash after lunch and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.806166045703255,
+      "id" : "12-midword-100",
+      "kind" : "midword",
+      "latencyMs" : 61.969792,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "taging",
+      "truth" : "taging by evening."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.23807098675441934,
+      "id" : "13-boundary-52",
+      "kind" : "boundary",
+      "latencyMs" : 103.071458,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "is",
+      "truth" : "works for me for the second round.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.33471407897871375,
+      "id" : "13-boundary-69",
+      "kind" : "boundary",
+      "latencyMs" : 88.663542,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "the second round.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.2109525977049043,
+      "id" : "13-boundary-73",
+      "kind" : "boundary",
+      "latencyMs" : 85.822291,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "interview.",
+      "truth" : "second round.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.0062841837720683585,
+      "id" : "13-boundary-102",
+      "kind" : "boundary",
+      "latencyMs" : 123.975,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Nilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.3886719054447283,
+      "id" : "13-midword-36",
+      "kind" : "midword",
+      "latencyMs" : 53.895833,
+      "score" : {
+        "acceptedChars" : 5,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "esday",
+      "truth" : "esday afternoon works for me for the second round.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.5901221285321921,
+      "id" : "13-midword-55",
+      "kind" : "midword",
+      "latencyMs" : 113.81575,
+      "score" : {
+        "acceptedChars" : 6,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ks for me.",
+      "truth" : "ks for me for the second round.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9465516567004462,
+      "id" : "14-boundary-26",
+      "kind" : "boundary",
+      "latencyMs" : 86.125708,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "it",
+      "truth" : "your PR after standup. Ping me if it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.3122408343379274,
+      "id" : "14-boundary-34",
+      "kind" : "boundary",
+      "latencyMs" : 87.105916,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "and get back to",
+      "truth" : "after standup. Ping me if it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.24304496306226314,
+      "id" : "14-boundary-40",
+      "kind" : "boundary",
+      "latencyMs" : 78.821,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "I finish my current",
+      "truth" : "standup. Ping me if it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.7432290367547709,
+      "id" : "14-boundary-60",
+      "kind" : "boundary",
+      "latencyMs" : 98.228292,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "you need",
+      "truth" : "it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.31784499650161885,
+      "id" : "14-midword-1",
+      "kind" : "midword",
+      "latencyMs" : 101.736458,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ure,",
+      "truth" : "ure, I'll take a look at your PR after standup. Ping me if it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.43551237350018573,
+      "id" : "14-midword-50",
+      "kind" : "midword",
+      "latencyMs" : 88.674125,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "lease",
+      "truth" : "ing me if it's urgent."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.39087879370879264,
+      "id" : "15-boundary-26",
+      "kind" : "boundary",
+      "latencyMs" : 104.02,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "is",
+      "truth" : "data is migrated. QA is still testing the visitor log on staging."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.07910511289373505,
+      "id" : "15-boundary-44",
+      "kind" : "boundary",
+      "latencyMs" : 61.635917,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "QA is still testing the visitor log on staging."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.18798871072138262,
+      "id" : "15-boundary-56",
+      "kind" : "boundary",
+      "latencyMs" : 62.083667,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "testing the visitor log on staging."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.17293938044366944,
+      "id" : "15-boundary-68",
+      "kind" : "boundary",
+      "latencyMs" : 74.179917,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "visitor log on staging."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8407950065761058,
+      "id" : "15-midword-11",
+      "kind" : "midword",
+      "latencyMs" : 137.942208,
+      "score" : {
+        "acceptedChars" : 14,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "llevue society is migrated",
+      "truth" : "llevue society data is migrated. QA is still testing the visitor log on staging."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.7098308229978856,
+      "id" : "15-midword-73",
+      "kind" : "midword",
+      "latencyMs" : 122.616125,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "or",
+      "truth" : "or log on staging."
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.8681127158171114,
+      "id" : "16-boundary-94",
+      "kind" : "boundary",
+      "latencyMs" : 112.833292,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "up on",
+      "truth" : "up with Ramesh on the revised quote."
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.4332439167391351,
+      "id" : "16-boundary-97",
+      "kind" : "boundary",
+      "latencyMs" : 51.899542,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "on",
+      "truth" : "with Ramesh on the revised quote."
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.056578857635546854,
+      "id" : "16-boundary-102",
+      "kind" : "boundary",
+      "latencyMs" : 63.909792,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Ramesh on the revised quote."
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.3538341146901452,
+      "id" : "16-boundary-109",
+      "kind" : "boundary",
+      "latencyMs" : 62.245834,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "on",
+      "truth" : "on the revised quote."
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.07920553012327432,
+      "id" : "16-midword-26",
+      "kind" : "midword",
+      "latencyMs" : 137.043458,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "ing, review Meera's PR, share the roadmap doc after standup, follow up with Rame"
+    },
+    {
+      "category" : "note",
+      "confidence" : 0.017789249293752498,
+      "id" : "16-midword-121",
+      "kind" : "midword",
+      "latencyMs" : 158.492292,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "ed quote."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.5971739713729554,
+      "id" : "17-boundary-15",
+      "kind" : "boundary",
+      "latencyMs" : 87.552625,
+      "score" : {
+        "acceptedChars" : 7,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "week we",
+      "truth" : "week we shipped the gate pass flow and fixed the visitor log bugs. Next week we "
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.4484183541850097,
+      "id" : "17-boundary-20",
+      "kind" : "boundary",
+      "latencyMs" : 66.041542,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "we",
+      "truth" : "we shipped the gate pass flow and fixed the visitor log bugs. Next week we will "
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.23720526349354482,
+      "id" : "17-boundary-50",
+      "kind" : "boundary",
+      "latencyMs" : 75.937083,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "and",
+      "truth" : "and fixed the visitor log bugs. Next week we will focus on amenity booking.\n\nBes"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.7863955175272155,
+      "id" : "17-boundary-87",
+      "kind" : "boundary",
+      "latencyMs" : 89.335125,
+      "score" : {
+        "acceptedChars" : 12,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "week we will",
+      "truth" : "week we will focus on amenity booking.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.5929258057218871,
+      "id" : "17-midword-26",
+      "kind" : "midword",
+      "latencyMs" : 74.574333,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "pped",
+      "truth" : "pped the gate pass flow and fixed the visitor log bugs. Next week we will focus "
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.0017939580857142296,
+      "id" : "17-midword-36",
+      "kind" : "midword",
+      "latencyMs" : 102.868541,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "ate pass flow and fixed the visitor log bugs. Next week we will focus on amenity"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.10363007219591652,
+      "id" : "18-boundary-19",
+      "kind" : "boundary",
+      "latencyMs" : 100.16725,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "take a look at the billing bug after standup and push the fix to staging by even"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.6700007443092081,
+      "id" : "18-boundary-34",
+      "kind" : "boundary",
+      "latencyMs" : 48.042167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "it",
+      "truth" : "the billing bug after standup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.11061239797481418,
+      "id" : "18-boundary-64",
+      "kind" : "boundary",
+      "latencyMs" : 63.219875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.08311597888834156,
+      "id" : "18-boundary-92",
+      "kind" : "boundary",
+      "latencyMs" : 63.004667,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.980723717325727,
+      "id" : "18-midword-28",
+      "kind" : "midword",
+      "latencyMs" : 108.025333,
+      "score" : {
+        "acceptedChars" : 9,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ok at the",
+      "truth" : "ok at the billing bug after standup and push the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2557151038086522,
+      "id" : "18-midword-70",
+      "kind" : "midword",
+      "latencyMs" : 87.637,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "sh",
+      "truth" : "sh the fix to staging by evening."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.3103254818984446,
+      "id" : "19-boundary-18",
+      "kind" : "boundary",
+      "latencyMs" : 130.430125,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "be there in",
+      "truth" : "pick them up on the way back. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.966184045194246,
+      "id" : "19-boundary-55",
+      "kind" : "boundary",
+      "latencyMs" : 63.431375,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "know",
+      "truth" : "know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.2389968441238264,
+      "id" : "19-boundary-60",
+      "kind" : "boundary",
+      "latencyMs" : 52.316958,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "if",
+      "truth" : "if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.8589125511344939,
+      "id" : "19-boundary-68",
+      "kind" : "boundary",
+      "latencyMs" : 72.584459,
+      "score" : {
+        "acceptedChars" : 5,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "works for",
+      "truth" : "works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.875216832185151,
+      "id" : "19-midword-4",
+      "kind" : "midword",
+      "latencyMs" : 88.437,
+      "score" : {
+        "acceptedChars" : 7,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ds good",
+      "truth" : "ds good, I'll pick them up on the way back. Let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9974131721770244,
+      "id" : "19-midword-9",
+      "kind" : "midword",
+      "latencyMs" : 26.999167,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "od",
+      "truth" : "od, I'll pick them up on the way back. Let me know if that works."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.23719033366995432,
+      "id" : "20-boundary-23",
+      "kind" : "boundary",
+      "latencyMs" : 76.410959,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "the quick turnaround. Finance has approved the revised quote, so we can sign thi"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.5266062787710015,
+      "id" : "20-boundary-66",
+      "kind" : "boundary",
+      "latencyMs" : 62.888667,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "the",
+      "truth" : "the revised quote, so we can sign this week.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.289952252321807,
+      "id" : "20-boundary-88",
+      "kind" : "boundary",
+      "latencyMs" : 62.353667,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "we",
+      "truth" : "we can sign this week.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.6601747025217279,
+      "id" : "20-boundary-117",
+      "kind" : "boundary",
+      "latencyMs" : 48.930834,
+      "score" : {
+        "acceptedChars" : 7,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "regards",
+      "truth" : "regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.9346857175751451,
+      "id" : "20-midword-102",
+      "kind" : "midword",
+      "latencyMs" : 77.6545,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "e contract",
+      "truth" : "is week.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.6703727237071528,
+      "id" : "20-midword-113",
+      "kind" : "midword",
+      "latencyMs" : 61.779709,
+      "score" : {
+        "acceptedChars" : 3,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "est",
+      "truth" : "est regards,\nNilava"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.6205684005767971,
+      "id" : "21-boundary-15",
+      "kind" : "boundary",
+      "latencyMs" : 76.403667,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "is ready",
+      "truth" : "is on staging now. Please test the gate pass flow and let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.08622688671189196,
+      "id" : "21-boundary-41",
+      "kind" : "boundary",
+      "latencyMs" : 62.984167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "test the gate pass flow and let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.6345145760895167,
+      "id" : "21-boundary-73",
+      "kind" : "boundary",
+      "latencyMs" : 87.998625,
+      "score" : {
+        "acceptedChars" : 10,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "me know if you",
+      "truth" : "me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.5170772144929898,
+      "id" : "21-boundary-84",
+      "kind" : "boundary",
+      "latencyMs" : 62.15,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "you",
+      "truth" : "that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.3124836161684913,
+      "id" : "21-midword-12",
+      "kind" : "midword",
+      "latencyMs" : 76.599209,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "lders are",
+      "truth" : "ld is on staging now. Please test the gate pass flow and let me know if that wor"
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9667259949784481,
+      "id" : "21-midword-43",
+      "kind" : "midword",
+      "latencyMs" : 61.718333,
+      "score" : {
+        "acceptedChars" : 2,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "st",
+      "truth" : "st the gate pass flow and let me know if that works."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9943872249956335,
+      "id" : "22-boundary-18",
+      "kind" : "boundary",
+      "latencyMs" : 92.794791,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "look",
+      "truth" : "look at the crash logs after lunch and get back to you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.94526708149123,
+      "id" : "22-boundary-36",
+      "kind" : "boundary",
+      "latencyMs" : 46.445666,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "logs",
+      "truth" : "logs after lunch and get back to you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.25443944763686577,
+      "id" : "22-boundary-57",
+      "kind" : "boundary",
+      "latencyMs" : 89.317167,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "see if I can",
+      "truth" : "get back to you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9624099079452679,
+      "id" : "22-boundary-61",
+      "kind" : "boundary",
+      "latencyMs" : 63.679208,
+      "score" : {
+        "acceptedChars" : 11,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "back to you",
+      "truth" : "back to you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9713745024821492,
+      "id" : "22-midword-31",
+      "kind" : "midword",
+      "latencyMs" : 40.45475,
+      "score" : {
+        "acceptedChars" : 9,
+        "acceptedChunks" : 2,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "rash logs",
+      "truth" : "rash logs after lunch and get back to you."
+    },
+    {
+      "category" : "chat",
+      "confidence" : 0.9999790193851352,
+      "id" : "22-midword-62",
+      "kind" : "midword",
+      "latencyMs" : 64.842208,
+      "score" : {
+        "acceptedChars" : 10,
+        "acceptedChunks" : 3,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "ack to you",
+      "truth" : "ack to you."
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.09105376850819547,
+      "id" : "23-boundary-29",
+      "kind" : "boundary",
+      "latencyMs" : 196.661708,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "confirmed for next Friday. Please share any dietary preferences by Wednesday.\n\nB"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.0760589743290949,
+      "id" : "23-boundary-48",
+      "kind" : "boundary",
+      "latencyMs" : 84.918708,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Friday. Please share any dietary preferences by Wednesday.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.12825757245418154,
+      "id" : "23-boundary-56",
+      "kind" : "boundary",
+      "latencyMs" : 60.436875,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "Please share any dietary preferences by Wednesday.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.3945039247069783,
+      "id" : "23-boundary-81",
+      "kind" : "boundary",
+      "latencyMs" : 62.006,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : true
+      },
+      "suggestion" : "restrictions",
+      "truth" : "preferences by Wednesday.\n\nBest regards,\nNilava"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.9531207177984237,
+      "id" : "23-midword-34",
+      "kind" : "midword",
+      "latencyMs" : 63.792167,
+      "score" : {
+        "acceptedChars" : 4,
+        "acceptedChunks" : 1,
+        "firstChunkCorrect" : true,
+        "shown" : true
+      },
+      "suggestion" : "rmed",
+      "truth" : "rmed for next Friday. Please share any dietary preferences by Wednesday.\n\nBest r"
+    },
+    {
+      "category" : "email",
+      "confidence" : 0.08542851125858865,
+      "id" : "23-midword-118",
+      "kind" : "midword",
+      "latencyMs" : 132.54825,
+      "score" : {
+        "acceptedChars" : 0,
+        "acceptedChunks" : 0,
+        "firstChunkCorrect" : false,
+        "shown" : false
+      },
+      "suggestion" : "",
+      "truth" : "ds,\nNilava"
+    }
+  ],
+  "summary" : {
+    "acceptedChars" : 349,
+    "acceptedCharsPerCase" : 2.423611111111111,
+    "byCategory" : {
+      "chat" : {
+        "acceptedCharsPerCase" : 2.6333333333333333,
+        "cases" : 90,
+        "precision" : 0.6571428571428571,
+        "recall" : 0.5111111111111111
+      },
+      "email" : {
+        "acceptedCharsPerCase" : 2.25,
+        "cases" : 48,
+        "precision" : 0.6388888888888888,
+        "recall" : 0.4791666666666667
+      },
+      "note" : {
+        "acceptedCharsPerCase" : 0.6666666666666666,
+        "cases" : 6,
+        "precision" : 0.6666666666666666,
+        "recall" : 0.3333333333333333
+      }
+    },
+    "byKind" : {
+      "boundary" : {
+        "acceptedCharsPerCase" : 1.875,
+        "cases" : 96,
+        "precision" : 0.5441176470588235,
+        "recall" : 0.3854166666666667
+      },
+      "midword" : {
+        "acceptedCharsPerCase" : 3.5208333333333335,
+        "cases" : 48,
+        "precision" : 0.8292682926829268,
+        "recall" : 0.7083333333333334
+      }
+    },
+    "cases" : 144,
+    "firstChunkCorrect" : 71,
+    "latencyP50Ms" : 76.599209,
+    "latencyP95Ms" : 137.043458,
+    "precision" : 0.6513761467889908,
+    "recall" : 0.4930555555555556,
+    "showRate" : 0.7569444444444444,
+    "shown" : 109,
+    "wrongShowRate" : 0.2638888888888889
+  }
+}

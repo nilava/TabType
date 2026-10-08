@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         // Register bundled fonts so ghost text can match fields that use them.
         Log.shared.info("ghost fonts: \(BundledFonts.families.joined(separator: ", "))")
 
+        // The author's own writing (opt-in) → suffix index for personal phrasing.
+        PersonalIndex.shared.start()
+
         // Start loading the selected engine's model + spell dictionary right away.
         startSelectedEngine()
         settings.$engineChoice

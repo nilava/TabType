@@ -1,0 +1,24 @@
+{"category": "chat", "app": "Slack", "context": "Priya: can you check the gate pass flow?", "text": "Sure, I'll take a look at the gate pass flow after standup and push the fix to staging by evening."}
+{"category": "chat", "app": "Slack", "context": "Arjun: is the visitor log fixed?", "text": "Yes, I pushed the fix to staging this morning. Let me know if that works for the society admins."}
+{"category": "chat", "app": "Slack", "context": "Meera: any update on the billing bug?", "text": "I'll take a look at the billing bug after lunch and push the fix to staging by evening."}
+{"category": "email", "app": "Mail", "context": "Subject: Release notes", "text": "Hi team,\n\nThe new build is on staging now. Please test the gate pass and visitor log flows and let me know if that works for you.\n\nBest regards,\nNilava"}
+{"category": "email", "app": "Mail", "context": "Subject: Vendor follow-up", "text": "Hi Ramesh,\n\nThanks for the quick turnaround on the revised quote. We will review it with finance this week and get back to you.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Kabir: can we move the sync?", "text": "Sounds good, let's move the sync to Thursday afternoon. Let me know if that works for everyone."}
+{"category": "chat", "app": "Slack", "context": "Sana: did QA sign off?", "text": "Not yet, QA is still testing the visitor log on staging. I'll ping them after standup."}
+{"category": "email", "app": "Gmail", "context": "Subject: Leave request", "text": "Hi Anjali,\n\nI would like to take leave on Friday for a family function. I have handed over the gate pass work to Kabir.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Dev: login broken on staging?", "text": "I'll take a look at the login issue right away and push the fix to staging once it's verified."}
+{"category": "chat", "app": "WhatsApp", "context": "Rahul: dinner tonight?", "text": "Sounds good, let's meet at 8. Let me know if that works for you."}
+{"category": "email", "app": "Mail", "context": "Subject: Society onboarding", "text": "Hi Vikram,\n\nThe Bellevue society is now live on the app. Residents can use the gate pass and visitor log from today.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Tanvi: roadmap doc?", "text": "I'll share the roadmap doc after standup. Let me know if that works."}
+{"category": "chat", "app": "Slack", "context": "Priya: the amenity booking crashes", "text": "Thanks for flagging, I'll take a look at the amenity booking crash after lunch and push the fix to staging by evening."}
+{"category": "email", "app": "Gmail", "context": "Subject: Interview", "text": "Hi Karan,\n\nThanks for the update. Tuesday afternoon works for me for the second round.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Meera: can you review my PR?", "text": "Sure, I'll take a look at your PR after standup. Ping me if it's urgent."}
+{"category": "chat", "app": "Slack", "context": "Arjun: is the Bellevue society migrated?", "text": "Yes, the Bellevue society data is migrated. QA is still testing the visitor log on staging."}
+{"category": "note", "app": "Notes", "context": "", "text": "Todo: push the fix to staging, review Meera's PR, share the roadmap doc after standup, follow up with Ramesh on the revised quote."}
+{"category": "email", "app": "Mail", "context": "Subject: Weekly update", "text": "Hi team,\n\nThis week we shipped the gate pass flow and fixed the visitor log bugs. Next week we will focus on amenity booking.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Kabir: who owns the billing bug?", "text": "I'll take it. I'll take a look at the billing bug after standup and push the fix to staging by evening."}
+{"category": "chat", "app": "Messages", "context": "Ananya: groceries?", "text": "Sounds good, I'll pick them up on the way back. Let me know if that works."}
+{"category": "email", "app": "Gmail", "context": "Subject: Quote", "text": "Hi Ramesh,\n\nThanks for the quick turnaround. Finance has approved the revised quote, so we can sign this week.\n\nBest regards,\nNilava"}
+{"category": "chat", "app": "Slack", "context": "Sana: release today?", "text": "Yes, the build is on staging now. Please test the gate pass flow and let me know if that works."}
+{"category": "chat", "app": "Slack", "context": "Dev: can you check the crash logs?", "text": "Sure, I'll take a look at the crash logs after lunch and get back to you."}
+{"category": "email", "app": "Mail", "context": "Subject: Offsite", "text": "Hi everyone,\n\nThe offsite is confirmed for next Friday. Please share any dietary preferences by Wednesday.\n\nBest regards,\nNilava"}

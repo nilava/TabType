@@ -6,6 +6,7 @@ public enum LlamaError: Error, CustomStringConvertible {
     case contextInit(String)
     case decode(Int32)
     case contextFull
+    case adapterLoad(String)
 
     public var description: String {
         switch self {
@@ -13,6 +14,7 @@ public enum LlamaError: Error, CustomStringConvertible {
         case .contextInit(let path): return "failed to create a context for \(path)"
         case .decode(let code): return "llama_decode failed (\(code))"
         case .contextFull: return "prompt does not fit in the context window"
+        case .adapterLoad(let path): return "couldn't apply the adapter at \(path) (not a LoRA adapter for this model?)"
         }
     }
 }
@@ -48,6 +50,9 @@ public final class LlamaRuntime: TokenModel, @unchecked Sendable {
 
     private let model: OpaquePointer
     private let context: OpaquePointer
+    private var adapter: OpaquePointer?
+    /// The LoRA adapter currently applied, if any.
+    public private(set) var adapterPath: String?
     private let vocabPointer: OpaquePointer
     private var batch: llama_batch
     private let batchCapacity: Int
@@ -100,6 +105,7 @@ public final class LlamaRuntime: TokenModel, @unchecked Sendable {
     }
 
     deinit {
+        if let adapter { llama_adapter_lora_free(adapter) }
         llama_batch_free(batch)
         llama_free(context)
         llama_model_free(model)
@@ -121,6 +127,33 @@ public final class LlamaRuntime: TokenModel, @unchecked Sendable {
             blocked[i] = eog[i] || llama_vocab_is_control(vocab, id) || length <= 0
         }
         return VocabIndex(pieces: pieces, blocked: blocked, endOfGeneration: eog)
+    }
+
+    // MARK: Adapters
+
+    /// Apply a LoRA adapter (e.g. one tuned on the author's writing) at `scale`, or
+    /// clear it with nil. The prompt cache is dropped: its states were computed
+    /// without the adapter.
+    public func setAdapter(path: String?, scale: Float = 1) throws {
+        guard let path else {
+            _ = llama_set_adapters_lora(context, nil, 0, nil)
+            if let adapter { llama_adapter_lora_free(adapter) }
+            adapter = nil
+            adapterPath = nil
+            reset()
+            return
+        }
+        guard let loaded = llama_adapter_lora_init(model, path) else { throw LlamaError.adapterLoad(path) }
+        var adapters: [OpaquePointer?] = [loaded]
+        var scales: [Float] = [scale]
+        guard llama_set_adapters_lora(context, &adapters, 1, &scales) == 0 else {
+            llama_adapter_lora_free(loaded)
+            throw LlamaError.adapterLoad(path)
+        }
+        if let adapter { llama_adapter_lora_free(adapter) }
+        adapter = loaded
+        adapterPath = path
+        reset()
     }
 
     // MARK: Model info

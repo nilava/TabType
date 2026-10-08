@@ -560,6 +560,7 @@ private struct AppOverrideDetail: View {
                 Text("Mid-line: show completions even when there's text after the cursor on the same line.")
                     .font(.caption).foregroundStyle(.secondary)
                 TriStatePicker(title: "Autocorrect", value: $override.autocorrectEnabled)
+                TriStatePicker(title: "Learn from my writing here", value: $override.learnFromWriting)
                 TriStatePicker(title: "Disable Tab key", value: $override.disableTabKey,
                               onLabel: "Disabled", offLabel: "Enabled")
                 Text("Turn this on for apps where Tab has important native functionality (e.g. indenting, switching fields).")

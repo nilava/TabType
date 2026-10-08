@@ -139,6 +139,47 @@ final class CompletionDecoderTests: XCTestCase {
     }
 }
 
+final class RetrievalHintTests: XCTestCase {
+    private let pieces = ["<eos>", " cat", " dog", " d", "og", " sat", " on", " the"]
+
+    func testHintWinsCloseCallsWithHonestConfidence() throws {
+        let m = FakeModel(pieces: pieces, rules: ["the": [" cat": 3, " dog": 2.5], "dog": [" sat": 5], "cat": [" sat": 5]])
+        var options = DecoderOptions()
+        options.extensionThreshold = 2
+        let plain = try XCTUnwrap(CompletionDecoder.complete("Hi the ", model: m, options: options))
+        XCTAssertEqual(plain.text, "cat")
+        XCTAssertFalse(plain.followsHint)
+
+        options.hint = Array("dog sat".utf8)
+        let hinted = try XCTUnwrap(CompletionDecoder.complete("Hi the ", model: m, options: options))
+        XCTAssertEqual(hinted.text, "dog")
+        XCTAssertTrue(hinted.followsHint)
+        XCTAssertLessThan(hinted.confidence, 0.5, "reported confidence is the model's own, not boosted")
+    }
+
+    func testImplausibleHintIsIgnored() throws {
+        let m = FakeModel(pieces: pieces, rules: ["the": [" cat": 6]])
+        var options = DecoderOptions()
+        options.hint = Array("dog".utf8)
+        let r = try XCTUnwrap(CompletionDecoder.complete("Hi the ", model: m, options: options))
+        XCTAssertEqual(r.text, "cat")
+        XCTAssertFalse(r.followsHint)
+    }
+
+    func testHintIsFollowedAcrossTokens() throws {
+        // " dog" isn't one token here: the hint path goes " d" + "og".
+        let m = FakeModel(pieces: ["<eos>", " cat", " d", "og", " sat"],
+                          rules: ["the": [" cat": 2.6, " d": 2.5], " d": ["og": 4], "og": [" sat": 5], "cat": [" sat": 5]])
+        var options = DecoderOptions()
+        options.extensionThreshold = 2
+        options.hint = Array("dog".utf8)
+        let r = try XCTUnwrap(CompletionDecoder.complete("Hi the ", model: m, options: options))
+        XCTAssertEqual(r.text, "dog")
+        XCTAssertTrue(r.followsHint)
+        XCTAssertEqual(m.liveCandidateSequences, [])
+    }
+}
+
 final class WordsThatFitTests: XCTestCase {
     func testOffersOtherFittingWordsWithoutTheSelectedOne() throws {
         let m = FakeModel(pieces: ["<eos>", " cat", " dog", " sat", " on"],

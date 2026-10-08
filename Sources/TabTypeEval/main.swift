@@ -106,7 +106,9 @@ case "run":
                                  threshold: option("--threshold").flatMap(Double.init) ?? 0,
                                  template: template, templateName: templateName,
                                  authorName: option("--author") ?? "Nilava Chowdhury",
-                                 situationHeader: arguments.contains("--header"))
+                                 situationHeader: arguments.contains("--header"),
+                                 history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
+                                 hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
     case let other:
         fail("unknown backend \(other)")
     }
@@ -117,6 +119,9 @@ case "run":
     try EvalRunner.write(run, to: out)
     let baseline = try option("--baseline").map { try EvalRunner.load(url($0)) }
     print(EvalReport.render(run, baseline: baseline))
+    if let decoder = backend as? DecoderBackend, decoder.hintsOffered > 0 {
+        print("personal history: hints offered \(decoder.hintsOffered), followed \(decoder.hintsUsed)")
+    }
     print("results → \(out.path)")
 
 case "report":

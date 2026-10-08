@@ -227,10 +227,11 @@ struct PersonalizationPane: View {
 
     var body: some View {
         Form {
-            Section("Typing History") {
-                Toggle("Collect inputs for personalization", isOn: $settings.collectTypingHistory)
-                Text("TabType can record short snippets of text it monitors to improve completions. All collected data is encrypted and stored locally on your Mac — nothing is sent anywhere. Not recommended if you work with particularly sensitive information.")
+            Section("Learn from your writing") {
+                Toggle("Learn from what I write", isOn: $settings.collectTypingHistory)
+                Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")
                     .font(.caption).foregroundStyle(.secondary)
+                LearnedWritingRow()
                 Toggle("Store inputs without accepted completions", isOn: $settings.storeInputsWithoutAcceptedCompletions)
                     .disabled(!settings.collectTypingHistory)
                 Text("When on, TabType stores everything it monitors, even when you don't accept a suggestion. When off, only text where you accepted a completion is stored.")
@@ -443,4 +444,26 @@ struct AboutPane: View {
         ("FrequencyWords", "Autocorrect frequency lists — Hermit Dave (MIT)"),
         ("SymSpell algorithm", "Symmetric-delete spelling correction — Wolf Garbe (MIT)"),
     ]
+}
+
+
+/// How much writing TabType has learned from, with an erase button.
+private struct LearnedWritingRow: View {
+    @ObservedObject private var store = WritingStore.shared
+    @State private var confirming = false
+
+    var body: some View {
+        HStack {
+            Text(store.documentCount == 0
+                 ? "Nothing learned yet."
+                 : "Learned from \(store.documentCount) pieces of writing (\(ByteCountFormatter.string(fromByteCount: Int64(store.characterCount), countStyle: .file))).")
+                .font(.callout).foregroundStyle(.secondary)
+            Spacer()
+            Button("Erase…", role: .destructive) { confirming = true }
+                .disabled(store.documentCount == 0)
+        }
+        .confirmationDialog("Erase everything TabType learned from your writing?", isPresented: $confirming) {
+            Button("Erase", role: .destructive) { store.eraseAll() }
+        }
+    }
 }

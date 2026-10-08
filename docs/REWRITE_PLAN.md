@@ -314,11 +314,14 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Pause menu: "In ‹App› for 1 Hour"
 - [x] Placement from live data (Claude desktop): strip clamped to the input field; caret bar excluded from scoring; when the app's font isn't available, measured size/baseline/colour are used with the system font (vertical confidence ≥ 0.8); real-strip replay test for offline tuning
 
-### Phase 7 — Personalisation
-- [ ] Encrypted `WritingStore` (per-app/domain opt-in, erase)
-- [ ] `SuffixIndex` retrieval + logit bias; measure on eval set
-- [ ] Global + per-app custom instructions in prompt
-- [ ] LoRA adapter loading UI
+### Phase 7 — Personalisation ✅
+- [x] `SuffixIndex` (TabTypeKit): suffix array over the author's writing; longest-tail, case/whitespace-insensitive retrieval with support counts; mid-word aware; 4,000 messages index in ~30 ms
+- [x] Decoder hint: the author's continuation joins the candidates, follows their phrasing with TRUE probabilities (honest confidence), wins ties via a log-space bonus, and extends along their phrase with a gentler bar; app lowers the show threshold for phrases used ≥2 times
+- [x] Eval (repeat-writer synthetic corpus, leave-one-out): chars/case 2.15 → 2.42 (+13%), precision 60.5 → 65.1%, wrong-show 31.2 → 26.4%. Seed corpus (unrelated texts): neutral. Real gains depend on the user's own writing
+- [x] `WritingStore`: encrypted (shared key file), secret-scrubbed, capped; records sent messages and field text on leaving a field; imports the old typing history once; per-app "Learn from my writing here"; erase in Settings
+- [x] Global + per-app custom instructions reach the prompt (since Phase 6a)
+- [x] LoRA "voice" adapters: load/clear on the running model (cache reset), mismatch errors surfaced, Settings picker + folder; verified with a real Qwen3-0.6B adapter
+- [ ] Training adapters from recorded writing (separate project)
 
 ### Phase 8 — Cutover
 - [ ] Remove MLX, swift-transformers, swift-jinja, Apple Intelligence engine

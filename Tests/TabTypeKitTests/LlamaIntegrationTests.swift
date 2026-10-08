@@ -105,6 +105,40 @@ final class LlamaIntegrationTests: XCTestCase {
         }
     }
 
+    func testInvalidAdapterIsRejectedAndModelKeepsWorking() throws {
+        try eachModel { runtime in
+            let notAnAdapter = FileManager.default.temporaryDirectory.appendingPathComponent("not-an-adapter.gguf")
+            try Data("GGUF but not really".utf8).write(to: notAnAdapter)
+            defer { try? FileManager.default.removeItem(at: notAnAdapter) }
+            XCTAssertThrowsError(try runtime.setAdapter(path: notAnAdapter.path))
+            XCTAssertNil(runtime.adapterPath)
+            XCTAssertNotNil(try CompletionDecoder.complete("Thanks for the update ", model: runtime))
+            try runtime.setAdapter(path: nil)
+        }
+    }
+
+    /// Opt-in: TABTYPE_TEST_ADAPTER=<lora.gguf> TABTYPE_TEST_ADAPTER_MODEL=<substring of model file>.
+    func testAdapterChangesPredictionsAndClears() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let adapter = env["TABTYPE_TEST_ADAPTER"], let match = env["TABTYPE_TEST_ADAPTER_MODEL"],
+              let path = Self.modelPaths.first(where: { $0.contains(match) }) else { throw XCTSkip("no adapter") }
+        let runtime = try Self.runtimes[path] ?? LlamaRuntime(modelPath: path)
+        Self.runtimes[path] = runtime
+        let tokens = runtime.tokenize("Write a short poem about the sea.\n", addSpecial: true)
+        runtime.reset()
+        let base = Array(try runtime.evaluatePrompt(tokens).values)
+        try runtime.setAdapter(path: adapter)
+        XCTAssertEqual(runtime.adapterPath, adapter)
+        let adapted = Array(try runtime.evaluatePrompt(tokens).values)
+        let delta = zip(base, adapted).map { abs($0 - $1) }.max() ?? 0
+        XCTAssertGreaterThan(delta, 0.05, "adapter had no effect")
+        XCTAssertNotNil(try CompletionDecoder.complete("Thanks for the update ", model: runtime))
+        try runtime.setAdapter(path: nil)
+        let restored = Array(try runtime.evaluatePrompt(tokens).values)
+        XCTAssertLessThan(zip(base, restored).map { abs($0 - $1) }.max() ?? 1, 0.1, "clearing didn't restore the base model")
+        print("ADAPTER max logit change \(delta)")
+    }
+
     func testInferenceEngineDropsSupersededRequests() async throws {
         guard let path = Self.modelPaths.first else { throw XCTSkip("no GGUF models in models/") }
         let engine = InferenceEngine()

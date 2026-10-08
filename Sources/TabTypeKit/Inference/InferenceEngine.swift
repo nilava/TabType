@@ -75,6 +75,12 @@ public actor InferenceEngine {
         idleCheck?.cancel()
     }
 
+    /// Apply (or clear, with nil) a LoRA adapter on the loaded model.
+    public func setAdapter(path: String?, scale: Float = 1) throws {
+        _ = gate.next()
+        try runtime?.setAdapter(path: path, scale: scale)
+    }
+
     // MARK: Requests
 
     /// Claims the newest request id, invalidating all earlier requests. Call it on

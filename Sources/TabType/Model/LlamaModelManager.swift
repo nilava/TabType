@@ -22,6 +22,40 @@ final class LlamaModelManager: ObservableObject {
     @Published var selectedID: String {
         didSet { UserDefaults.standard.set(selectedID, forKey: Self.selectedKey) }
     }
+    /// File name of the LoRA "voice" adapter to apply, or nil.
+    @Published private(set) var adapterName: String?
+    @Published private(set) var adapterError: String?
+
+    /// Where LoRA adapters (.gguf) are dropped.
+    var adaptersDirectory: URL { store.directory.deletingLastPathComponent().appendingPathComponent("Adapters") }
+
+    var availableAdapters: [String] {
+        _ = storageRevision
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: adaptersDirectory.path)) ?? []
+        return files.filter { $0.hasSuffix(".gguf") }.sorted()
+    }
+
+    /// Apply (or clear) an adapter now and remember the choice.
+    func setAdapter(_ name: String?) {
+        adapterName = name
+        UserDefaults.standard.set(name, forKey: Self.adapterKey)
+        applyAdapter()
+    }
+
+    private func applyAdapter() {
+        guard isLoaded else { return }
+        let path = adapterName.map { adaptersDirectory.appendingPathComponent($0).path }
+        Task {
+            do {
+                try await inference.setAdapter(path: path)
+                adapterError = nil
+                Log.shared.info("v2 engine: adapter \(adapterName ?? "none") applied")
+            } catch {
+                adapterError = "\(error)"
+                Log.shared.info("v2 engine: adapter failed: \(error)")
+            }
+        }
+    }
 
     let inference = InferenceEngine()
     let store = TabTypeKit.ModelStore()
@@ -34,12 +68,14 @@ final class LlamaModelManager: ObservableObject {
     private var downloadTask: Task<Void, Never>?
 
     private static let selectedKey = "llamaModelID"
+    private static let adapterKey = "llamaAdapter"
     private static let customPrefix = "custom:"
 
     private init() {
         catalog = (try? TabTypeKit.ModelCatalog.bundled())
             ?? TabTypeKit.ModelCatalog(version: 0, models: [], recommendations: [])
         selectedID = UserDefaults.standard.string(forKey: Self.selectedKey) ?? ""
+        adapterName = UserDefaults.standard.string(forKey: Self.adapterKey)
         if selectedID.isEmpty { selectedID = recommendedID ?? catalog.models.first?.id ?? "" }
     }
 
@@ -151,6 +187,7 @@ final class LlamaModelManager: ObservableObject {
                 decoderOptions = entry.decoderOptions()
                 loadedID = id
                 status = .ready(id: id)
+                if adapterName != nil { applyAdapter() }
                 Log.shared.info("v2 engine: loaded \(entry.name) (\(entry.template)) in \(Int(Date().timeIntervalSince(start) * 1000))ms")
                 await selfTest(entry)
             } catch {

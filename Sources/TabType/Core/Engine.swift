@@ -58,7 +58,19 @@ final class Engine {
     /// The last AX-read field text per app — the reliable source for committed
     /// messages. The keystroke fallback `buffer` is lossy (missed keystrokes,
     /// send-by-click boundaries) and used to glue messages together mid-word.
-    private var lastAXInput: (bundleId: String, text: String)?
+    private var lastAXInput: (bundleId: String, text: String, windowTitle: String)?
+
+    /// Whether to learn from writing in `bundleId`: the per-app choice, else the
+    /// global "learn from my writing" setting.
+    private func learnsFromWriting(_ bundleId: String) -> Bool {
+        AppPolicyStore.userOverrides[bundleId]?.learnFromWriting ?? settings.collectTypingHistory
+    }
+
+    /// Keep the text written in the field being left (a draft, email, note…).
+    private func recordFieldWriting() {
+        guard let ax = lastAXInput, learnsFromWriting(ax.bundleId) else { return }
+        WritingStore.shared.record(ax.text, bundleId: ax.bundleId, fieldKey: ax.windowTitle, kind: .field)
+    }
 
     /// Snapshot the just-sent message (Return pressed / field cleared). Prefers
     /// the last AX snapshot of the field over the keystroke buffer.
@@ -73,6 +85,9 @@ final class Engine {
         }
         lastAXInput = nil
         guard text.count >= 4 else { return }
+        if learnsFromWriting(bundleId) {
+            WritingStore.shared.record(text, bundleId: bundleId, fieldKey: nil, kind: .message)
+        }
         var list = recentInputs[bundleId] ?? []
         if list.last != text {
             list.append(SecretSanitizer.sanitize(String(text.suffix(300))))
@@ -193,6 +208,8 @@ final class Engine {
                 // The accessory button is anchored to the previous app's window —
                 // hide it now; the next edit in the new app re-shows it.
                 self.accessory.hide()
+                self.recordFieldWriting()
+                self.lastAXInput = nil
                 self.parked = nil   // parked seeds never cross app boundaries
                 // Track the new app's focused element via AX notifications so we
                 // notice field changes INSTANTLY, not on the next keystroke.
@@ -276,6 +293,8 @@ final class Engine {
                 guard let self else { return }
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
+                self.recordFieldWriting()
+                self.lastAXInput = nil
                 self.buffer = ""
                 self.lastPredictedPrompt = ""
                 self.parked = nil   // parked seeds never cross field boundaries
@@ -1334,7 +1353,7 @@ final class Engine {
 
         // Remember the field's AX text — commitRecentInput reads this when the
         // message is sent (the keystroke buffer alone is lossy).
-        if let bid = bundleId, !ctx.input.isEmpty { lastAXInput = (bid, ctx.input) }
+        if let bid = bundleId, !ctx.input.isEmpty { lastAXInput = (bid, ctx.input, ctx.windowTitle) }
 
         // Skip redundant work if nothing changed since the last prediction.
         if !speculative {
@@ -1378,6 +1397,7 @@ final class Engine {
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
+        req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
         if !speculative { lastReq = req }   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
         if settings.verboseLog, !(engine is LlamaEngine) {

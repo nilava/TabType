@@ -36,25 +36,49 @@ final class DecoderBackend: CompletionBackend {
     /// nil: the Phase 0/2 document prompt (`EvalPrompt`), kept for comparison.
     private let assembler: PromptAssembler?
     private let authorName: String?
+    /// Leave-one-out personal history: each case retrieves only from OTHER corpus
+    /// entries (case ids start with their entry index).
+    private let history: [CorpusEntry]?
+    private let hintFactor: Double
+    private var indexes: [Int: SuffixIndex] = [:]
+    private(set) var hintsOffered = 0
+    private(set) var hintsUsed = 0
     private(set) var lastConfidence: Double?
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
-         template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false) {
+         template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
+         history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
+        self.history = history
+        self.hintFactor = hintFactor
         self.runtime = runtime
         self.options = options
         self.threshold = threshold
         self.assembler = template.map { PromptAssembler(template: $0, situationHeader: situationHeader) }
         self.authorName = authorName
-        name = "llama-decoder/\(templateName)"
+        name = "llama-decoder/\(templateName)" + (history == nil ? "" : "+history")
         model = URL(fileURLWithPath: runtime.modelPath).deletingPathExtension().lastPathComponent
     }
 
     func complete(_ evalCase: EvalCase) async throws -> String? {
         let text = assembler?.assemble(evalCase.promptContext(authorName: authorName))
             ?? EvalPrompt.document(for: evalCase)
+        var options = self.options
+        var support = 0
+        if let history, let entry = Int(evalCase.id.split(separator: "-").first ?? "") {
+            let index = indexes[entry] ?? SuffixIndex(documents: history.enumerated()
+                .filter { $0.offset != entry }.map(\.element.text))
+            indexes[entry] = index
+            if let hint = index.continuation(after: evalCase.prefix) {
+                options.hint = Array(hint.text.utf8)
+                support = hint.support
+                hintsOffered += 1
+            }
+        }
         let result = try CompletionDecoder.complete(text, model: runtime, options: options)
+        if result?.followsHint == true { hintsUsed += 1 }
         lastConfidence = result?.confidence ?? 0
-        guard let result, result.confidence >= threshold else { return nil }
+        let gate = (result?.followsHint == true && support >= 2) ? threshold * hintFactor : threshold
+        guard let result, result.confidence >= gate else { return nil }
         return result.text
     }
 }
