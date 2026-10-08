@@ -18,7 +18,7 @@ TabType's design follows Cotypist's, reconstructed from its observable behaviour
 | Speed | No fixed waits; a local copy of the field so prediction starts before the app publishes the keystroke; a running generation is kept and spliced when you type ahead; the continuation after a suggestion is precomputed (instant Tab chains); 30 s result cache |
 | Context | OCR of the area above the input field (≤800pt, field column ±70pt); capture on pause; a message keeps the context it started with |
 | Gating | Typo check on the word being typed only; minimum field size; terminals only inside AI-agent prompts; mid-line per app |
-| Extras | Text mirror preview per app; word alternatives and synonyms; per-app font size / offset; custom instructions; learning from your writing with a strength setting (gentle / balanced / strong) and "record only when I used a suggestion"; On battery power (on demand only, shorter suggestions, a smaller model); caret retry plan and line-height cache |
+| Extras | Per-app insertion workarounds (typing / per character / chunks / paste / first word typed, non-breaking spaces, Space key events, Paste and Match Style, Backspace after paste, straight quotes) and grey suggestion colour; alternatives and synonyms after a pause (Labs); emoji gender preference and neutral variant; text mirror preview per app; word alternatives and synonyms; per-app font size / offset; custom instructions; learning from your writing with a strength setting (gentle / balanced / strong) and "record only when I used a suggestion"; On battery power (on demand only, shorter suggestions, a smaller model); caret retry plan and line-height cache |
 
 ### Deliberately different (measured on `tabtype-eval`, seed-v1, Qwen3-4B base)
 - **The beam starts from the model's best first word.** Letting it swap the first word (as Cotypist does) cost 3.6 points of next-word recall.
@@ -27,10 +27,13 @@ TabType's design follows Cotypist's, reconstructed from its observable behaviour
 - **Thresholds** are tuned on our eval (show: 0.10 at a word boundary, 0.15 mid-word; extend while each word ≥ 0.2) — Cotypist's values couldn't be recovered.
 - **Accessibility fallback** for chats when OCR finds nothing (Cotypist reads chats from the screen only).
 
-### Not (yet) in TabType
-- Notarization and in-app auto-update (both need an Apple Developer account)
-- Per-app insertion workarounds (non-breaking space, paste-and-match-style, chunk size), smart-quote and rich-text toggles, grey suggestion colour
-- iCloud sync; emoji neutral/gender preferences; alternatives/synonyms that appear after a delay
+### Done differently because there's no Apple Developer account
+- **Updates:** TabType checks its GitHub Releases and installs in place after verifying the release's SHA-256 and code-signing identity (Cotypist uses Sparkle).
+- **Sync between Macs:** iCloud Drive with passphrase-based end-to-end encryption (Cotypist uses iCloud with end-to-end encryption; CloudKit needs a paid developer account).
+
+### Not in TabType
+- Notarization (needs a paid Apple Developer ID) — first launch needs "Open Anyway"
+- A rich-text editor support switch (no equivalent subsystem in TabType; the insertion workarounds cover the same problems)
 
 **Measured, not guessed:** on the 192-case seed set the v2 engine reaches ~58–60% next-word recall at ~66–73% precision (by threshold), with ~48% of shown phrases right in full — up from 37% / 38% in v1. We have no comparable public numbers for Cotypist, so we don't claim parity.
 

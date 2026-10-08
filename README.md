@@ -74,7 +74,11 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 - Per-app and per-website settings: enable/disable, mid-line suggestions, ghost size and offset, custom instructions, a **text mirror** preview for apps where inline ghost text can't be placed
 - Code editors get suggestions only in chat panels, never the main editor
 - Force-activate, per-app pause and global toggle shortcuts
-- Inline `/macros` (`/date`, `/uuid`, `/10km->mi`, `/2+2*3`), `:emoji`, and local autocorrect (incl. 6 Indian languages)
+- Per-app insertion workarounds for apps that mangle inserted text (typing vs pasting, chunk size, non-breaking spaces, Paste and Match Style…)
+- Inline `/macros` (`/date`, `/uuid`, `/10km->mi`, `/2+2*3`), `:emoji` (skin tone, gender preference), and local autocorrect (incl. 6 Indian languages)
+- **On battery power**: on-demand only, shorter suggestions, or a smaller model
+- **Sync between Macs** via iCloud Drive, end-to-end encrypted with your passphrase
+- **In-app updates** from GitHub Releases, verified (checksum + signature) before installing
 
 ## 🆚 How TabType compares
 
@@ -86,7 +90,8 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 | Works in any app (prose) | ✅ | ✅ | ❌ code / single-word |
 | Learns your voice | ✅ | ✅ | ❌ |
 | Screen / conversation context | ✅ OCR + AX fallback | ✅ | ❌ |
-| Notarized, auto-updating | ❌ (alpha) | ✅ | ✅ |
+| In-app updates | ✅ GitHub Releases, verified | ✅ | ✅ |
+| Notarized | ❌ (alpha, no paid developer account) | ✅ | ✅ |
 
 **vs [Cotypist](https://cotypist.app/)** — the closest comparison and our north star. TabType now follows its design closely: base-model phrase search, font matching from the app, context from above the field, listen-only keyboard with Tab as a hotkey, instant Tab chains, a text mirror. Cotypist is more polished, notarized, auto-updating and has a paid tier; TabType is **free, open-source and account-free**. Where they still differ (and why) is in the [detailed comparison](docs/COMPARISON.md).
 

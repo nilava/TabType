@@ -342,4 +342,5 @@ Reconstructed from Cotypist's behaviour and app structure (no code or prompt tex
 - [x] Text mirror preview (per app); settings pruned (timing, battery, context size, crop mode, mirroring, voice adapter, Tab-inserts-all)
 - [x] Prompt sections with token budgets — built, measured worse with our own delimiters, kept off (`--sections`)
 - [x] Personalization strength, record-only-with-accepts, On battery power, caret retry plan + line-height cache, hotkey-conflict notice
-- [ ] Not yet: insertion workarounds, delayed alternatives/synonyms, iCloud sync, notarization + auto-update
+- [x] Insertion workarounds + grey colour, alternatives/synonyms after a pause, emoji gender/neutral, in-app updates from GitHub Releases (verified), sync between Macs via iCloud Drive (E2E, passphrase)
+- [ ] Not possible without a paid Apple Developer ID: notarization (CloudKit sync / Sparkle replaced as above)
