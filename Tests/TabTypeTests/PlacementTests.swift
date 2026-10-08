@@ -153,3 +153,14 @@ final class TerminalPromptTests: XCTestCase {
         XCTAssertNil(TerminalPrompt.input(before: "echo \"hi\n> there"))
     }
 }
+
+final class InsertionWorkaroundTests: XCTestCase {
+    func testStraightQuotesAndNonBreakingSpaces() {
+        var o = InsertionOptions()
+        XCTAssertEqual(TextInserter.transformed("it\u{2019}s \u{201C}ok\u{201D}", options: o), "it\u{2019}s \u{201C}ok\u{201D}")
+        o.straightQuotes = true
+        XCTAssertEqual(TextInserter.transformed("it\u{2019}s \u{201C}ok\u{201D}", options: o), "it's \"ok\"")
+        o.nonBreakingSpaces = true
+        XCTAssertEqual(TextInserter.transformed("at it", options: o), "at\u{00A0}it")
+    }
+}

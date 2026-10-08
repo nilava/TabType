@@ -530,12 +530,11 @@ final class Engine {
     private func replaceSelection(with word: String) {
         alternatives.hide()
         alternativesReplaceSelection = false
-        let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
-            .insertionStrategy
+        let insertPolicy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         DispatchQueue.main.async {
             self.markEdit()
             self.dropPendingEdits()   // text changed other than by typing
-            TextInserter.insert(word, strategy: strategy)
+            TextInserter.insert(word, policy: insertPolicy)
         }
     }
 
@@ -548,14 +547,13 @@ final class Engine {
         let toInsert = word + (settings.includeTrailingSpace ? " " : "")
         buffer += toInsert
         Statistics.shared.recordAccepted(wordCount: 1)
-        let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
-            .insertionStrategy
+        let insertPolicy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         let baselineLen = AccessibilityBridge.focusedElement()
             .flatMap { AccessibilityBridge.textLength(of: $0) }
         DispatchQueue.main.async {
             self.markEdit()
             self.dropPendingEdits()   // text changed other than by typing
-            TextInserter.insert(toInsert, strategy: strategy)
+            TextInserter.insert(toInsert, policy: insertPolicy)
             self.hostBaselineLen = baselineLen
             self.hostExpectedLen = baselineLen.map { $0 + toInsert.utf16.count }
             self.schedulePrediction()
@@ -1781,7 +1779,8 @@ final class Engine {
                 guard let self else { return }
                 let shown = self.overlay.showInline(
                     text: suggestion, at: rect, font: useFont,
-                    opacity: self.settings.ghostOpacity, color: useColor ?? color,
+                    opacity: self.settings.ghostOpacity,
+                    color: policy.greySuggestion ? nil : (useColor ?? color),
                     maxRightX: boxRight, fieldRect: fieldRect, leftX: leftX,
                     baseline: baseline)
                 if !shown {
@@ -2000,8 +1999,7 @@ final class Engine {
             if lookahead == nil || lookahead?.text != nil { router.cancelInFlight() }
         }
         buffer += toInsert
-        let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
-            .insertionStrategy
+        let insertPolicy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         acceptedInCurrentText = true
         let wordCount = toInsert.split(whereSeparator: { $0 == " " || $0 == "\n" }).count
         Statistics.shared.recordAccepted(wordCount: max(wordCount, toInsert.isEmpty ? 0 : 1))
@@ -2019,8 +2017,9 @@ final class Engine {
             // insertion like typing, or the remainder ghost paints at the
             // pre-insert caret and overlaps the inserted text.
             self.markEdit()
-            self.recordKeystroke(chars: toInsert, isDeletion: false, at: Engine.uptimeNow())
-            TextInserter.insert(toInsert, strategy: strategy)
+            self.recordKeystroke(chars: TextInserter.transformed(toInsert, options: insertPolicy.insertion),
+                                 isDeletion: false, at: Engine.uptimeNow())
+            TextInserter.insert(toInsert, policy: insertPolicy)
             if let next {
                 // Re-anchor at the settled caret — unless more Tabs already moved on.
                 guard self.currentSuggestion == next else { return }

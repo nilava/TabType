@@ -6,6 +6,23 @@ enum InsertionStrategy {
     case paste
 }
 
+/// Per-app insertion workarounds (Cotypist's), for apps that mangle injected text.
+struct InsertionOptions: Equatable {
+    /// nil: the app's strategy; 0 paste; 1 character by character; >1 chunks of
+    /// that many characters; -1 type the first word, paste the rest.
+    var chunkSize: Int?
+    /// Spaces as U+00A0 (editors that drop a trailing injected space).
+    var nonBreakingSpaces = false
+    /// Spaces as real Space key presses.
+    var spaceKeyEvents = false
+    /// Paste with ⌥⇧⌘V (Paste and Match Style) instead of ⌘V.
+    var pasteMatchStyle = false
+    /// One Backspace after pasting (editors that add a character on paste).
+    var backspaceAfterPaste = false
+    /// Curly quotes in suggestions become straight ones.
+    var straightQuotes = false
+}
+
 /// Per-app behavior overrides. Mirrors the per-app compatibility policies used by
 /// cotabby/KeyType so TabType behaves well (and safely) across very different apps.
 struct AppPolicy {
@@ -33,6 +50,9 @@ struct AppPolicy {
     /// the global default). Chat apps get a larger budget so more transcript survives.
     var screenContextCap: Int?
     var insertionStrategy: InsertionStrategy = .auto
+    var insertion = InsertionOptions()
+    /// Grey ghost text instead of the app's own text colour.
+    var greySuggestion: Bool = false
     /// Ghost-text font size multiplier (some apps render at different metrics).
     var fontFactor: Double = 1.0
     /// Ghost-text vertical nudge in points.
@@ -157,6 +177,15 @@ struct AppOverride: Codable, Equatable {
     var textMirror: Bool?
     /// Suggest even in small fields (search boxes etc.).
     var ignoreSizeThresholds: Bool?
+    /// Insertion workarounds (see `InsertionOptions`).
+    var insertionChunkSize: Int?
+    var nonBreakingSpaces: Bool?
+    var spaceKeyEvents: Bool?
+    var pasteMatchStyle: Bool?
+    var backspaceAfterPaste: Bool?
+    var straightQuotes: Bool?
+    /// Grey ghost text instead of the app's own text colour.
+    var greySuggestion: Bool?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
@@ -164,6 +193,9 @@ struct AppOverride: Codable, Equatable {
             && readConversation == nil && contextSize == nil
             && ghostFontScale == nil && ghostVerticalOffset == nil && learnFromWriting == nil
             && textMirror == nil && ignoreSizeThresholds == nil
+            && insertionChunkSize == nil && nonBreakingSpaces == nil && spaceKeyEvents == nil
+            && pasteMatchStyle == nil && backspaceAfterPaste == nil && straightQuotes == nil
+            && greySuggestion == nil
     }
 }
 
@@ -301,6 +333,13 @@ enum AppPolicyStore {
             if let offset = o.ghostVerticalOffset { policy.verticalOffset += offset }
             if let mirror = o.textMirror { policy.textMirror = mirror }
             if let ignore = o.ignoreSizeThresholds { policy.ignoreSizeThresholds = ignore }
+            policy.insertion.chunkSize = o.insertionChunkSize
+            policy.insertion.nonBreakingSpaces = o.nonBreakingSpaces ?? false
+            policy.insertion.spaceKeyEvents = o.spaceKeyEvents ?? false
+            policy.insertion.pasteMatchStyle = o.pasteMatchStyle ?? false
+            policy.insertion.backspaceAfterPaste = o.backspaceAfterPaste ?? false
+            policy.insertion.straightQuotes = o.straightQuotes ?? false
+            if let grey = o.greySuggestion { policy.greySuggestion = grey }
             applyContextOverrides(o, to: &policy)
         }
         return policy

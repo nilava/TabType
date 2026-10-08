@@ -335,6 +335,12 @@ private struct AppOverrideDetail: View {
     /// tells the truth, including the effect of edits made right here.
     private var resolved: AppPolicy { AppPolicyStore.policy(forBundleId: app.id) }
 
+    /// A Bool? override field as a toggle (off = nil, i.e. the default).
+    private func optionalFlag(_ key: WritableKeyPath<AppOverride, Bool?>) -> Binding<Bool> {
+        Binding(get: { override[keyPath: key] ?? false },
+                set: { override[keyPath: key] = $0 ? true : nil })
+    }
+
     var body: some View {
         Form {
             Section {
@@ -426,6 +432,28 @@ private struct AppOverrideDetail: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Improve compatibility with this app", isOn: $override.improveCompatibility)
                 Text("If completions don't appear reliably in this app, try turning this on — it switches to clipboard-paste insertion.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Use grey suggestion color", isOn: Binding(
+                    get: { override.greySuggestion ?? false },
+                    set: { override.greySuggestion = $0 ? true : nil }))
+            }
+            Section("Insertion workarounds") {
+                Picker("Insert accepted text by", selection: Binding(
+                    get: { override.insertionChunkSize ?? Int.min },
+                    set: { override.insertionChunkSize = $0 == Int.min ? nil : $0 })) {
+                    Text("Default").tag(Int.min)
+                    Text("Typing it").tag(16)
+                    Text("Typing character by character").tag(1)
+                    Text("Typing in chunks of 4").tag(4)
+                    Text("Pasting it").tag(0)
+                    Text("Typing the first word, pasting the rest").tag(-1)
+                }
+                Toggle("Use non-breaking spaces", isOn: optionalFlag(\.nonBreakingSpaces))
+                Toggle("Send spaces as Space key presses", isOn: optionalFlag(\.spaceKeyEvents))
+                Toggle("Paste and Match Style", isOn: optionalFlag(\.pasteMatchStyle))
+                Toggle("Press Backspace after pasting", isOn: optionalFlag(\.backspaceAfterPaste))
+                Toggle("Use straight quotes", isOn: optionalFlag(\.straightQuotes))
+                Text("Only for apps that mangle inserted text: dropped or doubled spaces, lost formatting, an extra character after pasting, or curly quotes where they don't belong.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Custom instructions") {
