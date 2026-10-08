@@ -565,6 +565,28 @@ private struct AppOverrideDetail: View {
                 Text("Turn this on for apps where Tab has important native functionality (e.g. indenting, switching fields).")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Appearance") {
+                LabeledContent("Ghost text size") {
+                    HStack {
+                        Slider(value: Binding(
+                            get: { override.ghostFontScale ?? 1 },
+                            set: { override.ghostFontScale = abs($0 - 1) < 0.005 ? nil : $0 }
+                        ), in: 0.8...1.2, step: 0.01)
+                        Text("\(Int(((override.ghostFontScale ?? 1) * 100).rounded()))%")
+                            .monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Vertical offset") {
+                    Stepper(value: Binding(
+                        get: { override.ghostVerticalOffset ?? 0 },
+                        set: { override.ghostVerticalOffset = $0 == 0 ? nil : $0 }
+                    ), in: -6...6, step: 0.5) {
+                        Text(String(format: "%+.1f pt", override.ghostVerticalOffset ?? 0)).monospacedDigit()
+                    }
+                }
+                Text("Fine-tune the suggestion text if it doesn't line up with this app's text. TabType normally measures the app's font automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Troubleshooting") {
                 Toggle("Improve compatibility with this app", isOn: $override.improveCompatibility)
                 Text("If completions don't appear reliably in this app, try turning this on — it switches to clipboard-paste insertion.")

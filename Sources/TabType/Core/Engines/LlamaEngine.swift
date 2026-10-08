@@ -48,6 +48,20 @@ final class LlamaEngine: SuggestionEngine {
         return result.text
     }
 
+    /// Words that fit in place of `word`, given the text before it — the word
+    /// picker's synonyms for a selection. `base` supplies the screen/app context.
+    func synonyms(for word: String, before: String, after: String, base: CompletionRequest?) async -> [String] {
+        guard let template = models.template else { return [] }
+        var request = base ?? CompletionRequest(beforeCursor: before, afterCursor: "", screenContext: "",
+                                                maxWords: 1, maxTokens: 8, temperature: 0)
+        request.beforeCursor = before
+        let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
+        let id = models.inference.beginRequest()
+        let words = (try? await models.inference.replacements(before: text, selected: word, after: after,
+                                                                count: 4, requestID: id)) ?? []
+        return words.map(\.text)
+    }
+
     private func context(for request: CompletionRequest) -> PromptContext {
         var screen = request.screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
         if screen.isEmpty { screen = request.documentStart.trimmingCharacters(in: .whitespacesAndNewlines) }

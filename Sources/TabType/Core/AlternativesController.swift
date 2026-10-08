@@ -25,7 +25,8 @@ final class AlternativesController {
     /// Merge a late-arriving candidate (e.g. the high-temperature regeneration).
     func addCandidate(_ word: String, forGeneration gen: Int, caretRect: CGRect?) {
         guard isActive, gen == generation else { return }
-        candidates = Self.dedup(candidates + [word])
+        // The first real candidate replaces the "…" loading placeholder.
+        candidates = Self.dedup(candidates.filter { $0 != Self.placeholder } + [word])
         render(caretRect: caretRect)
     }
 
@@ -33,7 +34,8 @@ final class AlternativesController {
 
     /// The candidate for a pressed digit key (1-based), if any.
     func candidate(at index: Int) -> String? {
-        guard isActive, index >= 1, index <= candidates.count else { return nil }
+        guard isActive, index >= 1, index <= candidates.count,
+              candidates[index - 1] != Self.placeholder else { return nil }
         return candidates[index - 1]
     }
 
@@ -50,6 +52,8 @@ final class AlternativesController {
             .joined(separator: "    ")
         panel.show(text: line, caretRect: caretRect)
     }
+
+    static let placeholder = "…"
 
     private static func dedup(_ words: [String]) -> [String] {
         var seen = Set<String>()

@@ -22,7 +22,10 @@ final class Engine {
     /// Fallback context buffer, used when the Accessibility API can't provide the
     /// focused field's text. Rebuilt on focus change.
     private var buffer = ""
-    private var currentSuggestion: String?
+    /// The ghost suggestion's lifecycle (type-through, Tab remainders, stale and
+    /// repeated results) — see `SuggestionSession`.
+    private var session = SuggestionSession()
+    private var currentSuggestion: String? { session.text }
     private var debounceWork: DispatchWorkItem?
     private var lastFocusedPID: pid_t = 0
     private var lastPredictedPrompt: String = ""
@@ -35,10 +38,6 @@ final class Engine {
     /// to reach at least this length — synthesized multi-char inserts land
     /// incrementally, and predicting on a half-landed insert regenerates stale text.
     private var hostExpectedLen: Int?
-    /// The text most recently inserted via Tab-accept, used to reject a follow-up
-    /// prediction that merely regenerates what was just accepted.
-    private var lastAcceptedText: String?
-    private var lastAcceptedAt: Date = .distantPast
     /// When the user last typed — presentation waits for a pause (see
     /// `presentWhenSettled`), because Electron caret bounds lag during bursts.
     private var lastKeystrokeAt = Date.distantPast
@@ -48,13 +47,6 @@ final class Engine {
     /// MID-BURST for a snapshot of the input, served instantly at the next pause
     /// when the typed text still matches (possibly having typed INTO it — LCP).
     private var parked: (input: String, suggestion: String)?
-    /// True while `currentSuggestion` is the un-accepted TAIL of a suggestion the
-    /// user is Tabbing through word-by-word. While held, no new prediction may
-    /// start, land, or overwrite the display — otherwise the recompute triggered
-    /// by the accepted word's own insertion steals the remainder mid-Tab.
-    /// Released when the remainder is exhausted, on any non-matching real
-    /// keystroke (via `clearSuggestion`), or on Escape/focus/app change.
-    private var protectingRemainder = false
     /// One-shot bypass of prediction gates (force-activate shortcut).
     private var forceNextPrediction = false
     /// Per-app temporary pauses (bundle id → resume time).
@@ -170,7 +162,7 @@ final class Engine {
             // Only worth a regeneration when something is (about to be) on screen.
             guard self.currentSuggestion != nil || !self.buffer.isEmpty else { return }
             // Never regenerate over a remainder being Tabbed through.
-            guard !(self.protectingRemainder && self.currentSuggestion != nil) else { return }
+            guard !self.session.isProtectingRemainder else { return }
             self.lastFreshRekick = Date()
             self.lastPredictedPrompt = ""   // context changed — bypass the dedup skip
             self.forceNextPrediction = true
@@ -363,6 +355,17 @@ final class Engine {
     /// a dictionary completion (mid-word), plus one higher-temperature model
     /// regeneration that streams in when ready.
     private func showWordAlternatives() {
+        // A selected word: offer words that fit in its place instead.
+        if let llama = router.current as? LlamaEngine, let element = AccessibilityBridge.focusedElement(),
+           let selection = AccessibilityBridge.selection(of: element) {
+            let word = selection.selected.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !word.isEmpty, !word.contains("\n"), word.split(separator: " ").count <= 3 {
+                showSynonyms(for: word, before: selection.before, after: selection.after, llama: llama,
+                             caretRect: AccessibilityBridge.caretRect(of: element))
+                return
+            }
+        }
+        alternativesReplaceSelection = false
         let caretRect = AccessibilityBridge.focusedElement()
             .flatMap { AccessibilityBridge.caretRect(of: $0) }
         var initial: [String] = []
@@ -409,11 +412,45 @@ final class Engine {
         }
     }
 
+    /// The open picker lists replacements for the selection (synonym mode), not
+    /// next words.
+    private var alternativesReplaceSelection = false
+
+    /// Synonym mode: words the model finds fitting in place of the selection.
+    private func showSynonyms(for word: String, before: String, after: String, llama: LlamaEngine,
+                              caretRect: CGRect?) {
+        let base = lastReq
+        Task { [weak self] in
+            let words = await llama.synonyms(for: word, before: before, after: after, base: base)
+            guard let self else { return }
+            guard !words.isEmpty else {
+                Log.shared.debug("synonyms: none for \"\(word)\"")
+                return
+            }
+            Log.shared.debug("synonyms for \"\(word)\": \(words.joined(separator: ", "))")
+            self.alternativesReplaceSelection = true
+            self.alternatives.show(candidates: words, caretRect: caretRect)
+        }
+    }
+
+    /// Replace the selected text with a picked synonym (typing over a selection
+    /// replaces it natively).
+    private func replaceSelection(with word: String) {
+        alternatives.hide()
+        alternativesReplaceSelection = false
+        let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
+            .insertionStrategy
+        DispatchQueue.main.async {
+            self.lastKeystrokeAt = Date()
+            TextInserter.insert(word, strategy: strategy)
+        }
+    }
+
     /// Insert a chosen alternative word (accept-word bookkeeping included).
     private func insertAlternative(_ word: String) {
         alternatives.hide()
         overlay.hide()
-        currentSuggestion = nil
+        session.clear()
         let toInsert = word + (settings.includeTrailingSpace ? " " : "")
         buffer += toInsert
         Statistics.shared.recordAccepted(wordCount: 1)
@@ -481,6 +518,14 @@ final class Engine {
         return (bid, until)
     }
 
+    /// Pause suggestions in the frontmost app for `minutes`.
+    func pauseFrontmostApp(minutes: Int) {
+        guard let bid = AccessibilityBridge.frontmostBundleId() else { return }
+        pausedApps[bid] = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        clearSuggestion()
+        Log.shared.info("suggestions paused \(minutes) min in \(bid)")
+    }
+
     func resumeFrontmostAppPause() {
         if let bid = AccessibilityBridge.frontmostBundleId() { pausedApps[bid] = nil }
     }
@@ -530,7 +575,11 @@ final class Engine {
         if alternatives.isActive {
             let digitKeys: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4]   // 1-4 row keys
             if let index = digitKeys[keyCode], let word = alternatives.candidate(at: index) {
-                insertAlternative(word)
+                if alternativesReplaceSelection {
+                    replaceSelection(with: word)
+                } else {
+                    insertAlternative(word)
+                }
                 return .swallow
             }
             alternatives.hide()
@@ -669,7 +718,7 @@ final class Engine {
         if commandActive {
             router.cancelInFlight()
             overlay.hide()
-            currentSuggestion = nil
+            session.clear()
             debounceWork?.cancel()
             return
         }
@@ -677,9 +726,7 @@ final class Engine {
         // Type-through: when the user types exactly what the ghost predicts, keep
         // the suggestion and shrink it in place instead of killing and regenerating
         // it — stable, instant, and zero model calls for matching keystrokes.
-        if !isDeletion, let suggestion = currentSuggestion,
-           !chars.isEmpty, suggestion.hasPrefix(chars), suggestion.count > chars.count {
-            let remainder = String(suggestion.dropFirst(chars.count))
+        if !isDeletion, currentSuggestion != nil, let remainder = session.typeThrough(chars) {
             // Hide immediately (the old position now overlaps the just-typed char);
             // the shrunken ghost reappears at the settled caret after the pause —
             // during a fast burst it stays hidden, exactly like Cotypist.
@@ -790,13 +837,12 @@ final class Engine {
         // A remainder being Tabbed through is protected — a NEW suggestion must
         // never steal its display slot (re-presents of the remainder itself come
         // through with isNewSuggestion: false).
-        if isNewSuggestion, protectingRemainder, currentSuggestion != nil {
+        // Register immediately: any keystroke during the wait clears/replaces it
+        // (clearSuggestion / type-through), aborting the scheduled presentation.
+        guard session.register(suggestion, isNew: isNewSuggestion) else {
             Statistics.shared.record(.heldForRemainder)
             return
         }
-        // Register immediately: any keystroke during the wait clears/replaces it
-        // (clearSuggestion / type-through), aborting the scheduled presentation.
-        currentSuggestion = suggestion
         let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         // Electron bounds lag ~0.3s after the last keystroke; 0.4s matches the
         // observed Cotypist timing, with the occupancy/ink-band guards as backstop.
@@ -1141,7 +1187,7 @@ final class Engine {
         // on screen must not be recomputed out from under them. But if the field
         // has emptied under the hold (message sent without a keystroke), the
         // remainder belongs to the sent text — drop it and continue normally.
-        if protectingRemainder, currentSuggestion != nil {
+        if session.isProtectingRemainder {
             let fieldText = AccessibilityBridge.focusedElement()
                 .flatMap { AccessibilityBridge.stringValue(of: $0) } ?? ""
             if fieldText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1431,8 +1477,7 @@ final class Engine {
         // Reject a prediction that merely regenerates the text just accepted via Tab
         // (happens when the speculative refetch still raced the insert into the AX
         // tree — the accepted text isn't in the prefix yet, so stripEcho misses it).
-        if let accepted = lastAcceptedText, Date().timeIntervalSince(lastAcceptedAt) < 3,
-           suggestion.trimmingCharacters(in: .whitespaces) == accepted.trimmingCharacters(in: .whitespaces) {
+        if session.evaluate(suggestion, requestedInput: ctxInput, currentInput: ctxInput) == .repeatOfAccepted {
             Log.shared.debug("predict -> (repeat of accepted text rejected) (\(elapsedMs)ms)")
             Statistics.shared.record(.rejectedRepeatAccepted)
             return
@@ -1461,14 +1506,25 @@ final class Engine {
         // Same guard the late-coalesced path has always had.
         let fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
                                          inputChars: settings.contextChars)
-        guard fresh.input == ctxInput else {
+        switch session.evaluate(suggestion, requestedInput: ctxInput, currentInput: fresh.input) {
+        case .present:
+            break
+        case .stale(let rekick):
             Log.shared.debug("predict -> (input changed during generation, discarded) (\(elapsedMs)ms)")
             Statistics.shared.record(.discardedStale)
             // Re-kick for the CURRENT input — without this, a burst whose requests
             // were all stale ends with the model idle and no suggestion ever shown.
-            // Not while a remainder is being Tabbed through: the "changed" input
-            // is the accepted word itself.
-            if !(protectingRemainder && currentSuggestion != nil) { schedulePrediction() }
+            // (Not while a remainder is being Tabbed through: the "changed" input
+            // is the accepted word itself.)
+            if rekick { schedulePrediction() }
+            return
+        case .held:
+            Statistics.shared.record(.heldForRemainder)
+            return
+        case .repeatOfAccepted:
+            Statistics.shared.record(.rejectedRepeatAccepted)
+            return
+        case .empty:
             return
         }
 
@@ -1488,7 +1544,7 @@ final class Engine {
     private func handleLateSuggestion(raw: String, req: CompletionRequest) {
         if let until = pausedUntil, Date() < until { return }
         // Never replace (or re-kick over) a remainder being Tabbed through.
-        if protectingRemainder, currentSuggestion != nil {
+        if session.isProtectingRemainder {
             Statistics.shared.record(.heldForRemainder)
             return
         }
@@ -1523,11 +1579,11 @@ final class Engine {
         let policy = policy ?? AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         // A remainder being Tabbed through owns the display slot (see
         // presentWhenSettled — this is the direct-call backstop).
-        if isNewSuggestion, protectingRemainder, currentSuggestion != nil,
-           currentSuggestion != suggestion {
-            return
+        if isNewSuggestion, session.text == suggestion {
+            // Already registered by presentWhenSettled.
+        } else {
+            guard session.register(suggestion, isNew: isNewSuggestion) else { return }
         }
-        currentSuggestion = suggestion
         if isNewSuggestion { Statistics.shared.recordShown() }
         if let caretRect = inlineCaret {
             // Match the field's real font when available; fall back to a caret-height guess.
@@ -1576,10 +1632,16 @@ final class Engine {
                           AccessibilityBridge.focusedWindowTitle() ?? "",
                           "\(Int(caretRect.height.rounded()))",
                           "\(Int(elementFrame?.minX ?? 0)),\(Int(elementFrame?.width ?? 0))"].joined(separator: "|")
+            /// The fitted font, with the app's size adjustment applied.
+            func fittedFont(_ fit: FieldFitCache.Fit) -> NSFont {
+                guard policy.fontFactor != 1 else { return fit.font }
+                return NSFont(descriptor: fit.font.fontDescriptor, size: fit.font.pointSize * policy.fontFactor)
+                    ?? fit.font
+            }
             /// Rect whose vertically-centred label puts the fitted font's baseline
             /// exactly on the field text's baseline.
             func placed(_ fit: FieldFitCache.Fit, at caret: CGRect) -> CGRect {
-                let f = fit.font
+                let f = fittedFont(fit)
                 let lineBox = f.ascender + abs(f.descender) + f.leading
                 let y = caret.minY + fit.baselineOffset - f.ascender - (caret.height - lineBox) / 2
                 return CGRect(x: caret.minX, y: y, width: caret.width, height: caret.height)
@@ -1605,7 +1667,7 @@ final class Engine {
                 // Re-paint (type-through, Tab remainder): reuse the field's fit so
                 // the ghost's font never flips between words.
                 if let fit = FieldFitCache.shared.cached(key: fitKey) {
-                    paint(placed(fit, at: anchored), fit.font, fit.textColor)
+                    paint(placed(fit, at: anchored), fittedFont(fit), fit.textColor)
                 } else {
                     paint(anchored, font, nil)
                 }
@@ -1664,8 +1726,8 @@ final class Engine {
                 // Best: the field's measured font/size/baseline/colour.
                 if self.settings.useScreenshotAppearance {
                     let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
-                    if let fit = await FieldFitCache.shared.fit(caret: target, key: fitKey, lineText: lineText,
-                                                                verbose: self.settings.verboseLog) {
+                    if let fit = await FieldFitCache.shared.fit(caret: target, fieldFrame: elementFrame, key: fitKey,
+                                                                lineText: lineText, verbose: self.settings.verboseLog) {
                         guard self.currentSuggestion == suggestion else { return }
                         let rect = placed(fit, at: target)
                         if policy.laggyCaret, self.settings.textMirroring {
@@ -1677,11 +1739,11 @@ final class Engine {
                             }
                             self.overlay.showMirror(
                                 typedTail: tail, suggestion: suggestion, caretRect: rect,
-                                baseline: target.minY + fit.baselineOffset, font: fit.font,
+                                baseline: target.minY + fit.baselineOffset, font: fittedFont(fit),
                                 textColor: fit.textColor, backgroundColor: fit.backgroundColor,
                                 ghostOpacity: self.settings.ghostOpacity, maxRightX: boxRight)
                         } else {
-                            paint(rect, fit.font, fit.textColor)
+                            paint(rect, fittedFont(fit), fit.textColor)
                         }
                         return
                     }
@@ -1774,40 +1836,13 @@ final class Engine {
             return false
         }
 
-        guard let suggestion = currentSuggestion, !suggestion.isEmpty else { return false }
-
-        let toInsert: String
-        let remainder: String
-        if whole {
-            toInsert = suggestion
-            remainder = ""
-        } else {
-            var split = TextInserter.firstWord(of: suggestion)
-            var accepted = split.accepted
-            var rest = split.remainder
-            // Optionally hold back trailing punctuation (…"word?" → "word" + "?").
-            if !settings.includeTrailingPunctuation {
-                var trimmed = accepted
-                while let last = trimmed.last, last.isPunctuation || last == "?" || last == "!" {
-                    rest = String(last) + rest
-                    trimmed.removeLast()
-                }
-                if !trimmed.isEmpty { accepted = trimmed }
-            }
-            // Optionally hold back the trailing space.
-            if !settings.includeTrailingSpace, accepted.hasSuffix(" ") {
-                accepted.removeLast()
-                rest = " " + rest
-            }
-            toInsert = accepted
-            remainder = rest
-            _ = split
-        }
+        let options = SuggestionSession.AcceptOptions(
+            includeTrailingPunctuation: settings.includeTrailingPunctuation,
+            includeTrailingSpace: settings.includeTrailingSpace)
+        guard let (toInsert, remainder) = session.accept(whole: whole, options: options) else { return false }
 
         overlay.hide()
-        currentSuggestion = remainder.isEmpty ? nil : remainder
-        protectingRemainder = !remainder.isEmpty
-        if protectingRemainder {
+        if session.isProtectingRemainder {
             // Tear down the prediction machinery armed by earlier real keystrokes,
             // or it fires on the just-inserted word and replaces the remainder:
             // the host-publish poll (scheduleToken), the debounce, and any
@@ -1836,8 +1871,6 @@ final class Engine {
         // predicting on pre-insertion text regenerates the suggestion just accepted.
         let baselineLen = AccessibilityBridge.focusedElement()
             .flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
-        lastAcceptedText = toInsert
-        lastAcceptedAt = Date()
 
         // Insert on the next tick so we return from the tap callback first.
         DispatchQueue.main.async {
@@ -1898,8 +1931,7 @@ final class Engine {
         debounceWork?.cancel()
         scheduleToken += 1   // invalidate any in-flight host-publish poll
         router.cancelInFlight()
-        protectingRemainder = false
-        currentSuggestion = nil
+        session.clear()
         hostExpectedLen = nil
         alternatives.hide()
         overlay.hide()

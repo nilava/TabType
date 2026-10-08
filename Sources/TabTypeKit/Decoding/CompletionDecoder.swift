@@ -19,6 +19,8 @@ public struct DecoderOptions: Sendable, Equatable {
     public var showThreshold = 0.2
     /// Token cap per word (guards against runaway tokens such as long numbers).
     public var maxTokensPerWord = 8
+    /// How many runner-up first words to report in `alternatives`.
+    public var maxAlternatives = 3
 
     public init() {}
 }
@@ -47,6 +49,99 @@ public struct CompletionResult: Sendable, Equatable {
 /// Confidence-scored completion on raw logits: token healing, parallel first-word
 /// candidates, duplicate merging, and probability-gated phrase extension.
 public enum CompletionDecoder {
+    /// Words that fit at the end of `text` (e.g. in place of a selected word),
+    /// most likely first, excluding `excluded` — the word picker's "synonyms".
+    /// Trailing punctuation is dropped unless `excluded` itself ends with some.
+    public static func wordsThatFit(after text: String, excluding excluded: String, model: TokenModel,
+                                    count: Int = 4, isCancelled: @escaping () -> Bool = { false }) throws -> [WordScore] {
+        var options = DecoderOptions()
+        options.candidates = max(1, model.maxSequences - 1)
+        options.minFirstTokenProbability = 0.005
+        options.extensionThreshold = 2   // single words
+        options.maxAlternatives = options.candidates
+        guard let result = try complete(text, model: model, options: options, isCancelled: isCancelled) else { return [] }
+        let keepPunctuation = excluded.last.map { $0.isPunctuation } ?? false
+        let normalized = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)).lowercased() }
+        let skip = normalized(excluded)
+        var seen = Set<String>()
+        return (result.words.prefix(1) + result.alternatives)
+            .map { w -> WordScore in
+                var t = w.text.trimmingCharacters(in: .whitespaces)
+                if !keepPunctuation { while let last = t.last, last.isPunctuation { t.removeLast() } }
+                return WordScore(text: t, probability: w.probability)
+            }
+            .filter { w in
+                let n = normalized(w.text)
+                return !n.isEmpty && n != skip && seen.insert(n).inserted
+            }
+            .prefix(count).map { $0 }
+    }
+
+    /// Replacements for a selected word: candidates from the left context and from
+    /// asking the model directly, ranked by P(word + following text | text before) —
+    /// so "the ___ turnaround" prefers "fast" over words that only fit the left side.
+    public static func replacements(before: String, selected: String, after: String, model: TokenModel,
+                                    count: Int = 4, isCancelled: @escaping () -> Bool = { false }) throws -> [WordScore] {
+        // Two candidate pools: words that fit the left context, and words the model
+        // offers when asked directly what the selected word could also be.
+        let sentenceStart = before.lastIndex(where: { ".!?\n".contains($0) }).map { before.index(after: $0) }
+        let leftSentence = String(before[(sentenceStart ?? before.startIndex)...].suffix(160))
+            .trimmingCharacters(in: .whitespaces)
+        let rightSentence = after.prefix { !".!?\n".contains($0) }
+        let question = "\(leftSentence)\(selected)\(rightSentence).\nIn this sentence, \"\(selected)\" could also be \""
+        var candidates = try wordsThatFit(after: question, excluding: selected, model: model, count: 7,
+                                          isCancelled: isCancelled)
+        for word in try wordsThatFit(after: before, excluding: selected, model: model, count: 7, isCancelled: isCancelled)
+        where !candidates.contains(where: { $0.text.lowercased() == word.text.lowercased() }) {
+            candidates.append(word)
+        }
+        // A few words of what follows are enough to judge the fit.
+        let snippet = String(after.prefix(40)).split(separator: " ", omittingEmptySubsequences: false)
+            .prefix(4).joined(separator: " ")
+        guard !snippet.trimmingCharacters(in: .whitespaces).isEmpty else { return Array(candidates.prefix(count)) }
+        let separator = before.last?.isWhitespace == false && !before.isEmpty ? " " : ""
+        var scored: [(WordScore, Double)] = []
+        for c in candidates {
+            if isCancelled() { throw CancellationError() }
+            // Joint P(word + following text | text before), in ONE context for every
+            // candidate — the pools' own probabilities came from different prompts.
+            let fit = try continuationLogProbability(prefix: before, continuation: separator + c.text + snippet,
+                                                     model: model)
+            scored.append((c, fit))
+        }
+        // Drop options far less likely than the best (>6 nats ≈ 400× less likely):
+        // a short list of good replacements beats padding it with junk.
+        let ranked = scored.sorted { $0.1 > $1.1 }
+        guard let best = ranked.first?.1 else { return [] }
+        return ranked.filter { $0.1 >= best - 6 }.prefix(count).map(\.0)
+    }
+
+    /// log P(continuation | prefix), from one prompt evaluation plus one batched
+    /// decode on a scratch sequence.
+    public static func continuationLogProbability(prefix: String, continuation: String,
+                                                  model: TokenModel) throws -> Double {
+        let full = model.tokenize(prefix + continuation, addSpecial: true)
+        let head = model.tokenize(prefix, addSpecial: true)
+        var k = 0
+        while k < min(full.count, head.count), full[k] == head[k] { k += 1 }
+        k = min(k, full.count - 1)
+        guard k >= 1 else { return 0 }
+        var scratch: [Float] = []
+        func logProb(_ logits: Logits, _ token: TokenID) -> Double {
+            Double(logits.values[Int(token)] - LogitMath.logSumExp(logits, blocked: nil, scratch: &scratch))
+        }
+        var total = logProb(try model.evaluatePrompt(Array(full[..<k])), full[k])
+        if full.count - k > 1 {
+            model.fork(to: 1)
+            defer { model.drop(sequence: 1) }
+            let entries = (k..<(full.count - 1)).map { BatchEntry(token: full[$0], position: $0, sequence: 1) }
+            for (i, logits) in try model.decode(entries).enumerated() {
+                total += logProb(logits, full[k + i + 1])
+            }
+        }
+        return total
+    }
+
     /// - Parameter text: everything before the caret, as it should be continued
     ///   (context included). The typed text must be at its very end.
     /// - Parameter isCancelled: polled between decode steps; a true result aborts.
@@ -195,7 +290,8 @@ private struct Session {
             text: text,
             confidence: exp(best.logP),
             words: words,
-            alternatives: merged.dropFirst().prefix(3).map { WordScore(text: $0.text, probability: exp($0.logP)) },
+            alternatives: merged.dropFirst().prefix(options.maxAlternatives)
+                .map { WordScore(text: $0.text, probability: exp($0.logP)) },
             predictedTrailingSpace: winner.stopToken.map { vocab.pieces[Int($0)].first == 0x20 } ?? false,
             promptTokens: promptLength,
             generatedTokens: generated)

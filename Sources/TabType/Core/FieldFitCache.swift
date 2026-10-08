@@ -17,18 +17,24 @@ final class FieldFitCache {
         let textColor: NSColor
         let backgroundColor: NSColor
         let confidence: Double
+        /// False when no available font matched the field's (custom app fonts):
+        /// size, baseline and colours are measured, the family is the system font.
+        let familyMatched: Bool
         let created: Date
     }
 
-    /// Fits below this aren't trusted; the ink-band heuristic is used instead.
+    /// Family match needed to use the fitted font itself.
     static let minimumConfidence = 0.8
+    /// Vertical match needed to use the measured size/baseline/colours with the
+    /// system font when the family can't be matched.
+    static let minimumVerticalConfidence = 0.8
 
     private var fits: [String: Fit] = [:]
     private var inFlight: Set<String> = []
 
     /// Cached or freshly measured fit for the field at `caret`. nil when the text
     /// can't be measured (no screen permission, too little text, low confidence).
-    func fit(caret: CGRect, key: String, lineText: String, verbose: Bool) async -> Fit? {
+    func fit(caret: CGRect, fieldFrame: CGRect?, key: String, lineText: String, verbose: Bool) async -> Fit? {
         if let cached = fits[key], Date().timeIntervalSince(cached.created) < 600 { return cached }
         guard !inFlight.contains(key), CGPreflightScreenCaptureAccess() else { return nil }
         let line = String(lineText.split(separator: "\n", omittingEmptySubsequences: false).last ?? "")
@@ -36,10 +42,15 @@ final class FieldFitCache {
         inFlight.insert(key)
         defer { inFlight.remove(key) }
 
-        // The strip: up to 360pt of the line left of the caret, a little taller
-        // than the caret so ascenders/descenders are inside but neighbouring lines
-        // mostly aren't.
-        let width = min(360, max(0, caret.minX - 2))
+        // The strip: up to 360pt of the line left of the caret, never past the
+        // input box's left edge (its border and whatever is beside it — sidebars,
+        // other panes — would pollute the fit), a little taller than the caret so
+        // ascenders/descenders are inside but neighbouring lines mostly aren't.
+        var leftLimit: CGFloat = 2
+        if let field = fieldFrame, field.width >= 60, field.minX < caret.minX, field.maxX + 8 >= caret.minX {
+            leftLimit = field.minX + 6
+        }
+        let width = min(360, max(0, caret.minX - leftLimit))
         let pad = caret.height * 0.2
         let stripRect = CGRect(x: caret.minX - width, y: caret.minY - pad,
                                width: width + 4, height: caret.height + 2 * pad)
@@ -62,12 +73,15 @@ final class FieldFitCache {
             Log.shared.debug("placement: fit gave no result (\(ms)ms)")
             return nil
         }
-        Log.shared.debug("placement: fit \(result.family) \(String(format: "%.2f", result.pointSize))pt conf \(String(format: "%.2f", result.confidence)) baseline +\(String(format: "%.1f", result.baselineFromTop / scale))pt (\(ms)ms)")
-        guard result.confidence >= Self.minimumConfidence, let font = Self.font(result) else { return nil }
+        Log.shared.debug("placement: fit \(result.family) \(String(format: "%.2f", result.pointSize))pt conf \(String(format: "%.2f", result.confidence)) vertical \(String(format: "%.2f", result.verticalConfidence)) baseline +\(String(format: "%.1f", result.baselineFromTop / scale))pt (\(ms)ms)")
+        let familyMatched = result.confidence >= Self.minimumConfidence
+        guard familyMatched || result.verticalConfidence >= Self.minimumVerticalConfidence else { return nil }
+        let font = familyMatched ? Self.font(result) : NSFont.systemFont(ofSize: CGFloat(result.pointSize))
+        guard let font else { return nil }
         let baselineGlobal = stripRect.minY + CGFloat(result.baselineFromTop / scale)
         let fit = Fit(font: font, baselineOffset: baselineGlobal - caret.minY,
                       textColor: Self.color(result.inkColor), backgroundColor: Self.color(result.background),
-                      confidence: result.confidence, created: Date())
+                      confidence: result.confidence, familyMatched: familyMatched, created: Date())
         fits[key] = fit
         return fit
     }

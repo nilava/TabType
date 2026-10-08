@@ -120,6 +120,9 @@ public struct FontFit: Equatable, Sendable {
     public var baselineFromTop: Double
     /// 1 − normalized profile error: ~0.9+ is a convincing match.
     public var confidence: Double
+    /// How well the vertical (row) ink profile matched alone: baseline and size can
+    /// be trusted from this even when the exact family isn't available.
+    public var verticalConfidence: Double
     public var inkColor: RGB
     public var background: RGB
     public var isDarkBackground: Bool { background.luminance < 0.5 }
@@ -152,7 +155,7 @@ public enum FontFitter {
         let trimmed = line.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
         guard trimmed.count >= 4 else { return nil }
 
-        struct Trial { var family: String; var size: Double; var score: Double; var baseline: Double }
+        struct Trial { var family: String; var size: Double; var score: Double; var baseline: Double; var rowError: Double }
 
         /// Scores one font/size against a strip prepared at a given resolution.
         struct Level {
@@ -169,7 +172,8 @@ public enum FontFitter {
                 self.scale = scale
                 columns = strip.columnProfile
                 rows = strip.rowProfile
-                right = min(strip.width - 1, Int(caretX.rounded()) + 2)
+                // Stop just short of the caret: the blinking caret bar is ink too.
+                right = min(strip.width - 1, Int((caretX - scale * 1.5).rounded()))
                 // Score only where the observed text is: from its left ink edge to the caret.
                 guard let l = columns.firstIndex(where: { $0 > 0.3 }), right - l >= 12 else { return nil }
                 left = l
@@ -190,7 +194,8 @@ public enum FontFitter {
             guard let r = score(family: family, size: size, text: trimmed, strip: level.strip,
                                 caretX: level.caretX, scale: level.scale, observedColumns: level.columns,
                                 observedRows: level.rows, left: level.left, right: level.right) else { return nil }
-            return Trial(family: family, size: size, score: r.score, baseline: r.baseline * scale / level.scale)
+            return Trial(family: family, size: size, score: r.score, baseline: r.baseline * scale / level.scale,
+                         rowError: r.rowError)
         }
 
         let available = candidates.filter { fontExists($0) }
@@ -223,14 +228,15 @@ public enum FontFitter {
         }
         guard let best = finals.min(by: { $0.score < $1.score }) else { return nil }
         return FontFit(family: best.family, pointSize: best.size, baselineFromTop: best.baseline,
-                       confidence: max(0, 1 - best.score), inkColor: strip.inkColor, background: strip.background)
+                       confidence: max(0, 1 - best.score), verticalConfidence: max(0, 1 - best.rowError),
+                       inkColor: strip.inkColor, background: strip.background)
     }
 
     // MARK: Scoring
 
     private static func score(family: String, size: Double, text: String, strip: InkStrip, caretX: Double,
                               scale: Double, observedColumns: [Float], observedRows: [Float],
-                              left: Int, right: Int) -> (score: Double, baseline: Double)? {
+                              left: Int, right: Int) -> (score: Double, baseline: Double, rowError: Double)? {
         let w = strip.width, h = strip.height
         let font = makeFont(family, pixelSize: size * scale)
         // Render with the baseline mid-strip, then slide the row profile into place.
@@ -261,7 +267,7 @@ public enum FontFitter {
             bestColumnError = min(bestColumnError, e)
         }
         let rowError = normalizedError(observedRows, rowsPlaced, range: 0...(h - 1), shift: 0)
-        return ((bestColumnError * 0.75 + rowError * 0.25), baseline)
+        return ((bestColumnError * 0.75 + rowError * 0.25), baseline, rowError)
     }
 
     /// ‖a/|a| − b/|b|‖ / √2 over `range` (b shifted by `shift`): 0 = same shape, 1 = disjoint.

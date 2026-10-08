@@ -140,11 +140,16 @@ struct AppOverride: Codable, Equatable {
     var readConversation: Bool?
     /// "small" / "large" screen-context budget override; nil = default.
     var contextSize: String?
+    /// Ghost text size multiplier (e.g. 0.95); nil = default.
+    var ghostFontScale: Double?
+    /// Ghost text vertical nudge in points (+ = down); nil = default.
+    var ghostVerticalOffset: Double?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
             && disableTabKey == nil && !improveCompatibility && customInstructions.isEmpty
             && readConversation == nil && contextSize == nil
+            && ghostFontScale == nil && ghostVerticalOffset == nil
     }
 }
 
@@ -272,6 +277,8 @@ enum AppPolicyStore {
             policy.autocorrectOverride = o.autocorrectEnabled
             if o.improveCompatibility { policy.insertionStrategy = .paste }
             policy.customInstructions = o.customInstructions
+            if let scale = o.ghostFontScale { policy.fontFactor *= scale }
+            if let offset = o.ghostVerticalOffset { policy.verticalOffset += offset }
             applyContextOverrides(o, to: &policy)
         }
         return policy

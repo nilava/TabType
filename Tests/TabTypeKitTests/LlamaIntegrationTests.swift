@@ -95,6 +95,16 @@ final class LlamaIntegrationTests: XCTestCase {
         }
     }
 
+    func testWordsThatFitReplaceASelectedWord() throws {
+        try eachModel { runtime in
+            let words = try CompletionDecoder.replacements(before: "Thanks a lot for the ", selected: "quick",
+                                                           after: " turnaround on the contract.", model: runtime)
+            XCTAssertFalse(words.isEmpty, runtime.modelDescription)
+            XCTAssertFalse(words.contains { $0.text.lowercased() == "quick" })
+            print("SYNONYMS \(runtime.modelDescription): \(words.map(\.text))")
+        }
+    }
+
     func testInferenceEngineDropsSupersededRequests() async throws {
         guard let path = Self.modelPaths.first else { throw XCTSkip("no GGUF models in models/") }
         let engine = InferenceEngine()

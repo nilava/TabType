@@ -139,6 +139,17 @@ final class CompletionDecoderTests: XCTestCase {
     }
 }
 
+final class WordsThatFitTests: XCTestCase {
+    func testOffersOtherFittingWordsWithoutTheSelectedOne() throws {
+        let m = FakeModel(pieces: ["<eos>", " cat", " dog", " sat", " on"],
+                          rules: ["the": [" cat": 3, " dog": 2.5, " sat": 1], "cat": [" sat": 5], "dog": [" sat": 5]])
+        let words = try CompletionDecoder.wordsThatFit(after: "Hi the ", excluding: "cat", model: m)
+        XCTAssertEqual(words.first?.text, "dog")
+        XCTAssertFalse(words.contains { $0.text.lowercased() == "cat" })
+        XCTAssertEqual(m.liveCandidateSequences, [])
+    }
+}
+
 final class GenerationGateTests: XCTestCase {
     func testNewerRequestInvalidatesOlder() {
         let gate = GenerationGate()

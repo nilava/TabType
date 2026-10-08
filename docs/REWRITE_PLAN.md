@@ -303,12 +303,16 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Only the selected engine's model loads; unload on quit (ggml exit rule); menu bar shows v2 status
 - [x] Word picker uses the decoder's scored alternatives
 
-### Phase 6 — Session & interaction
-- [ ] `InputSession` state machine replacing `Engine.swift`
-- [ ] Accept word / accept all / type-through / remainder protection / Esc pause
-- [ ] Secure-input detection banner (culprit app)
-- [ ] Per-app and per-domain overrides UI; timed disable from menu bar
-- [ ] Word picker + synonyms UI
+### Phase 6 — Session & interaction ✅
+- [x] `SuggestionSession` (TabTypeKit): the ghost lifecycle as a tested state model — type-through, Tab word-accept with protected remainder, stale/held/repeated results; `Engine` delegates all suggestion state to it (no scattered flags left)
+- [x] Word split fixed: with "include trailing punctuation" off, "look? " now accepts "look" (punctuation used to slip through)
+- [x] Accept word / accept all / type-through / remainder protection / Esc pause — via the session
+- [x] Secure-input notice names the app holding it (kCGSSessionSecureInputPID)
+- [x] Synonyms for a selected word: candidates from left context + asking the model directly, ranked by P(word + following text | before) — "the quick turnaround" → "fast"; picker replaces the selection
+- [x] Word picker: "…" placeholder can no longer be inserted
+- [x] Per-app ghost text size (80–120%) and vertical offset (±6 pt) in app overrides; applied to measured fonts too
+- [x] Pause menu: "In ‹App› for 1 Hour"
+- [x] Placement from live data (Claude desktop): strip clamped to the input field; caret bar excluded from scoring; when the app's font isn't available, measured size/baseline/colour are used with the system font (vertical confidence ≥ 0.8); real-strip replay test for offline tuning
 
 ### Phase 7 — Personalisation
 - [ ] Encrypted `WritingStore` (per-app/domain opt-in, erase)

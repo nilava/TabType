@@ -96,6 +96,20 @@ public actor InferenceEngine {
         }
     }
 
+    /// Replacements for a selected word (synonym picker), ranked by fit on both sides.
+    public func replacements(before: String, selected: String, after: String, count: Int,
+                             requestID: UInt64) throws -> [WordScore] {
+        guard gate.isCurrent(requestID), let runtime else { return [] }
+        lastUse = Date()
+        let gate = self.gate
+        do {
+            return try CompletionDecoder.replacements(before: before, selected: selected, after: after,
+                                                      model: runtime, count: count) { !gate.isCurrent(requestID) }
+        } catch is CancellationError {
+            return []
+        }
+    }
+
     /// Prefill a stable prompt head (template + context) so the first real request
     /// only computes the typed text.
     public func warmUp(_ text: String) throws {

@@ -121,6 +121,22 @@ enum AccessibilityBridge {
         return stringAttribute(kAXTitleAttribute as String, of: window)
     }
 
+    /// The field's selection, when one is active: the selected text and the text
+    /// before it (both UTF-16-correct).
+    static func selection(of element: AXUIElement) -> (selected: String, before: String, after: String)? {
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+              let rangeRef else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &range), range.length > 0,
+              let full = stringValue(of: element) else { return nil }
+        let ns = full as NSString
+        guard range.location >= 0, range.location + range.length <= ns.length else { return nil }
+        return (ns.substring(with: NSRange(location: range.location, length: range.length)),
+                ns.substring(to: range.location),
+                ns.substring(from: range.location + range.length))
+    }
+
     /// A string attribute, or nil.
     static func stringAttribute(_ name: String, of element: AXUIElement) -> String? {
         var ref: CFTypeRef?

@@ -162,7 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
         menu.addItem(item(statusLine(), icon: engineIconName(), enabled: false))
         if secureInputActive {
-            menu.addItem(item("Secure Input is on — suggestions paused",
+            menu.addItem(item(secureInputHolder.map { "Secure Input is held by \($0) — suggestions paused" }
+                              ?? "Secure Input is on — suggestions paused",
                               icon: "lock.fill", enabled: false))
         }
         if let pause = engine.frontmostAppPause() {
@@ -186,6 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             pauseMenu.addItem(item("For 15 Minutes", icon: "timer", action: #selector(pause15)))
             pauseMenu.addItem(item("For 1 Hour", icon: "timer", action: #selector(pause60)))
             pauseMenu.addItem(item("Until I Turn It Back On", icon: "moon.zzz", action: #selector(pauseIndefinitely)))
+            if let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != Bundle.main.bundleIdentifier,
+               let name = app.localizedName {
+                pauseMenu.addItem(.separator())
+                pauseMenu.addItem(item("In \(name) for 1 Hour", icon: "app.badge", action: #selector(pauseAppHour)))
+            }
             let pauseItem = item("Pause For…", icon: "pause.circle")
             pauseItem.submenu = pauseMenu
             menu.addItem(pauseItem)
@@ -242,6 +248,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// Another app holding macOS Secure Input silently blinds the keystroke tap —
     /// surface it instead of looking broken (Cotypist ships the same warning).
     private var secureInputActive = false
+    /// The app holding Secure Input, when macOS reports it (often a password
+    /// manager or a terminal with "Secure Keyboard Entry" on).
+    private var secureInputHolder: String?
+
+    /// Name of the process holding Secure Input, from the login session's
+    /// `kCGSSessionSecureInputPID`.
+    private static func secureInputHolderName() -> String? {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+              let pid = (session["kCGSSessionSecureInputPID"] as? NSNumber)?.int32Value, pid > 0 else { return nil }
+        return NSRunningApplication(processIdentifier: pid)?.localizedName
+    }
     private var secureInputTimer: Timer?
 
     func startSecureInputWatch() {
@@ -249,14 +266,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let active = IsSecureEventInputEnabled()
-                guard active != self.secureInputActive else { return }
+                let holder = active ? Self.secureInputHolderName() : nil
+                guard active != self.secureInputActive || holder != self.secureInputHolder else { return }
                 self.secureInputActive = active
+                self.secureInputHolder = holder
                 self.statusItem.button?.toolTip = active
-                    ? "Another app has Secure Input on — TabType can't see keystrokes until it releases it."
+                    ? "\(holder ?? "Another app") has Secure Input on — TabType can't see keystrokes until it releases it."
                     : nil
                 self.rebuildMenu()
                 if active {
-                    Log.shared.info("Secure Input active (another app) — keystroke tap is blind")
+                    Log.shared.info("Secure Input active (held by \(holder ?? "unknown app")) — keystroke tap is blind")
                 }
             }
         }
@@ -300,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func pauseIndefinitely() { engine.pause(minutes: nil); rebuildMenu() }
     @objc private func resumeNow() { engine.resume(); rebuildMenu() }
     @objc private func resumeAppPause() { engine.resumeFrontmostAppPause(); rebuildMenu() }
+    @objc private func pauseAppHour() { engine.pauseFrontmostApp(minutes: 60); rebuildMenu() }
 
     @objc private func openStatistics() {
         SettingsNavigator.shared.pendingSection = .statistics
