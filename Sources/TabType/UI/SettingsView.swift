@@ -143,6 +143,17 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section("On battery power") {
+                Toggle("Only show suggestions on demand", isOn: $settings.batteryOnDemandOnly)
+                Toggle("Generate slightly shorter suggestions", isOn: $settings.batteryShorterCompletions)
+                Toggle("Use a smaller model", isOn: $settings.batterySmallerModel)
+                    .onChange(of: settings.batterySmallerModel) { _, on in
+                        LlamaModelManager.shared.applyPower(onBattery: PowerMonitor.shared.onBattery, useSmallerModel: on)
+                    }
+                Text("Saves battery. \"On demand\" shows suggestions only when you press the force-activate shortcut; the smaller model is the next smaller one you've downloaded (Settings ▸ Model).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Appearance") {
                 GhostPreview(opacity: settings.ghostOpacity)
                     .listRowInsets(EdgeInsets())

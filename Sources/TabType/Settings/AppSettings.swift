@@ -49,6 +49,19 @@ final class AppSettings: ObservableObject {
     // MARK: TabType Labs (experimental)
     @Published var autocorrectLanguage: String { didSet { defaults.set(autocorrectLanguage, forKey: Keys.autocorrectLanguage) } }
 
+    // MARK: On battery power (Cotypist's battery options)
+    @Published var batteryOnDemandOnly: Bool { didSet { defaults.set(batteryOnDemandOnly, forKey: Keys.batteryOnDemandOnly) } }
+    @Published var batteryShorterCompletions: Bool { didSet { defaults.set(batteryShorterCompletions, forKey: Keys.batteryShorterCompletions) } }
+    @Published var batterySmallerModel: Bool { didSet { defaults.set(batterySmallerModel, forKey: Keys.batterySmallerModel) } }
+
+    /// One length step shorter (capped at medium) — "slightly shorter" on battery.
+    static func shorterWords(for length: String) -> Int {
+        switch length {
+        case "verylong", "long": return words(for: "medium")
+        default: return words(for: "short")
+        }
+    }
+
     // MARK: Advanced
     /// Characters of the field before the caret that are read (the prompt
     /// assembler budgets them further).
@@ -126,6 +139,9 @@ final class AppSettings: ObservableObject {
         // The length setting is the source of truth (older builds stored 8 here).
         maxWords = AppSettings.words(for: defaults.string(forKey: Keys.completionLength) ?? "medium")
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
+        batteryOnDemandOnly = defaults.object(forKey: Keys.batteryOnDemandOnly) as? Bool ?? false
+        batteryShorterCompletions = defaults.object(forKey: Keys.batteryShorterCompletions) as? Bool ?? false
+        batterySmallerModel = defaults.object(forKey: Keys.batterySmallerModel) as? Bool ?? false
         // Settings that only the removed v1 (MLX / Apple Intelligence) engine used.
         for key in Keys.retiredV1 { defaults.removeObject(forKey: key) }
         // Default OFF: OCR of the focused window repeatedly bled unrelated on-screen
@@ -198,9 +214,11 @@ final class AppSettings: ObservableObject {
                                 "storeInputsWithoutAcceptedCompletions", "personalizeWordChoice",
                                 // Tuning knobs removed in v2.1 (they only got in the way).
                                 "debounceMs", "continuousGeneration", "contextChars", "screenCropMode",
-                                "textMirroring", "batteryOnDemandOnly", "batteryUseDebounce",
-                                "batteryShorterCompletions", "llamaAdapter", "acceptWholeLine"]
+                                "textMirroring", "batteryUseDebounce", "llamaAdapter", "acceptWholeLine"]
         static let ghostOpacity = "ghostOpacity"
+        static let batteryOnDemandOnly = "batteryOnDemandOnly"
+        static let batteryShorterCompletions = "batteryShorterCompletions"
+        static let batterySmallerModel = "batterySmallerModel"
         static let useScreenContext = "useScreenContext"
         static let useClipboardContext = "useClipboardContext"
         static let useScreenshotAppearance = "useScreenshotAppearance"

@@ -77,8 +77,13 @@ final class LlamaModelManager: ObservableObject {
             catalog = await TabTypeKit.ModelCatalog.latest(cacheURL: cache)
             storageRevision += 1
         }
-        if isInstalled(selectedID) {
-            load(selectedID)
+        let onBattery = PowerMonitor.shared.onBattery && AppSettings.shared.batterySmallerModel
+        let initial = onBattery ? (batteryModelID() ?? selectedID) : selectedID
+        PowerMonitor.shared.onBatteryChange = { [weak self] on in
+            self?.applyPower(onBattery: on, useSmallerModel: AppSettings.shared.batterySmallerModel)
+        }
+        if isInstalled(initial) {
+            load(initial)
         } else if case .noModel = status {
             Log.shared.info("v2 engine: selected model \(selectedID) is not downloaded yet")
         }
@@ -157,6 +162,23 @@ final class LlamaModelManager: ObservableObject {
                 Log.shared.info("v2 engine: load of \(id) failed: \(error)")
             }
         }
+    }
+
+    /// On battery with "use a smaller model": the next smaller installed model of
+    /// the same kind (base or instruct) as the selected one, if any.
+    func batteryModelID() -> String? {
+        guard let selected = entry(id: selectedID) else { return nil }
+        return entries.filter { $0.id != selected.id && $0.template == selected.template
+                && $0.sizeBytes < selected.sizeBytes && isInstalled($0.id) }
+            .max(by: { $0.sizeBytes < $1.sizeBytes })?.id
+    }
+
+    /// Load the model for the current power state (the selected one on mains).
+    func applyPower(onBattery: Bool, useSmallerModel: Bool) {
+        let wanted = (onBattery && useSmallerModel) ? (batteryModelID() ?? selectedID) : selectedID
+        guard wanted != loadedID, isInstalled(wanted) else { return }
+        Log.shared.info("v2 engine: \(onBattery ? "on battery" : "on mains power") — using \(wanted)")
+        load(wanted)
     }
 
     /// Free the model before the process exits — ggml aborts if Metal resources

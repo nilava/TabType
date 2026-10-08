@@ -1274,6 +1274,8 @@ final class Engine {
 
         // Paused after Escape.
         if let until = pausedUntil, Date() < until { return }
+        // On battery, "only on demand": suggestions just from the force-activate shortcut.
+        if PowerMonitor.shared.onBattery, settings.batteryOnDemandOnly, !forceNextPrediction { return }
 
         // Per-domain disable (browsers).
         if !settings.disabledDomains.isEmpty, let host = AccessibilityBridge.frontmostURLHost(),
@@ -1447,7 +1449,8 @@ final class Engine {
             clipboard: clipboard,
             documentStart: ctx.documentStart,
             screenIsConversation: policy.transcriptViaAX,
-            maxWords: settings.maxWords)
+            maxWords: (PowerMonitor.shared.onBattery && settings.batteryShorterCompletions)
+                ? AppSettings.shorterWords(for: settings.completionLength) : settings.maxWords)
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
