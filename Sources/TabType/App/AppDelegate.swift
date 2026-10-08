@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         startSecureInputWatch()
+        // Updates from GitHub Releases: at launch and then daily (Settings ▸ About).
+        Updater.shared.checkIfDue()
+        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            MainActor.assumeIsolated { Updater.shared.checkIfDue() }
+        }
 
         // Rebuild the menu whenever model state or enablement changes.
         settings.$isEnabled

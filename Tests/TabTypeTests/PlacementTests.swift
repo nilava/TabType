@@ -180,3 +180,19 @@ final class EmojiGenderTests: XCTestCase {
                        ranked.map(\.code))
     }
 }
+
+final class UpdaterTests: XCTestCase {
+    func testVersionComparison() {
+        XCTAssertTrue(Updater.isNewer("2.1.0", than: "2.0.0"))
+        XCTAssertTrue(Updater.isNewer("1.10.0", than: "1.9.2"))
+        XCTAssertFalse(Updater.isNewer("2.0.0", than: "2.0.0"))
+        XCTAssertFalse(Updater.isNewer("2.0", than: "2.0.1"))
+        XCTAssertTrue(Updater.isNewer("2.1.0-beta", than: "2.0.9"))
+    }
+
+    func testChecksumFromReleaseNotes() {
+        let notes = "Install…\n\n**SHA-256** `9509A310CE630535FCCF24B5341A454C3FB7760B58AFC5440867B7AA686D7BB5`\n"
+        XCTAssertEqual(Updater.sha256(inNotes: notes), "9509a310ce630535fccf24b5341a454c3fb7760b58afc5440867b7aa686d7bb5")
+        XCTAssertNil(Updater.sha256(inNotes: "no checksum here"))
+    }
+}

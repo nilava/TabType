@@ -63,7 +63,7 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 - **Terminals**: suggestions inside AI agents' prompts (Claude Code, Codex, Gemini CLI) — never at the shell
 
 **Private by design**
-- 100% on-device inference; the only network requests are the model download and the public model list
+- 100% on-device inference; the only network requests are the model download, the public model list and the update check
 - Optional writing history is **AES-GCM encrypted** on disk and never leaves the Mac
 - Password fields and password managers are never read; small fields (search boxes) are skipped
 
@@ -126,7 +126,7 @@ There are a few other open-source macOS autocomplete projects — each great in 
 
 ## 🔒 Privacy
 
-Nothing you type leaves your machine. Inference is 100% local. The only network requests TabType makes are downloading the model from Hugging Face and refreshing the public model list (`models.json`) from this repository — neither carries any of your text. Learning from your writing is opt-in; that history is AES-GCM encrypted on disk and never leaves the Mac.
+Nothing you type leaves your machine. Inference is 100% local. The only network requests TabType makes are downloading the model from Hugging Face, refreshing the public model list (`models.json`) from this repository, and checking this repository's GitHub Releases for updates (daily; can be turned off in Settings ▸ About) — none carries any of your text. Learning from your writing is opt-in; that history is AES-GCM encrypted on disk and never leaves the Mac.
 
 ## 🛠 Build from source
 

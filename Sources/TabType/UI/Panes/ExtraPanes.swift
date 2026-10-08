@@ -358,6 +358,42 @@ struct StatisticsPane: View {
 /// Experimental, opt-in features that may change or be removed.
 
 
+/// Version + updates (GitHub Releases, verified before installing).
+struct UpdatesSection: View {
+    @ObservedObject private var updater = Updater.shared
+
+    var body: some View {
+        Section("Updates") {
+            LabeledContent("Version", value: updater.currentVersion)
+            Toggle("Check for updates automatically", isOn: Binding(
+                get: { updater.automatic }, set: { updater.automatic = $0 }))
+            switch updater.state {
+            case .available(let release):
+                HStack {
+                    Text("TabType \(release.version) is available.")
+                    Spacer()
+                    Button("Release notes") { NSWorkspace.shared.open(release.page) }
+                    Button("Download & Install") { updater.install(release) }
+                        .buttonStyle(.borderedProminent)
+                }
+            case .installing(let step):
+                HStack { ProgressView().controlSize(.small); Text(step) }
+            case .checking:
+                HStack { ProgressView().controlSize(.small); Text("Checking…") }
+            case .upToDate:
+                Text("You're up to date.").foregroundStyle(.secondary)
+            case .failed(let message):
+                Text(message).foregroundStyle(.red)
+            case .idle:
+                EmptyView()
+            }
+            Button("Check Now") { Task { await updater.check() } }
+            Text("Checks this project's GitHub Releases (no data about you is sent). Before installing, the download is checked against the checksum in the release notes and must be signed like this copy of TabType.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct AboutPane: View {
     var body: some View {
         Form {
@@ -374,6 +410,7 @@ struct AboutPane: View {
                     }
                 }
             }
+            UpdatesSection()
             Section("Privacy") {
                 Label("Runs 100% on your Mac. No cloud, no account, no telemetry.",
                       systemImage: "lock.shield")
