@@ -107,6 +107,24 @@ final class AppSettings: ObservableObject {
     /// Local, encrypted typing-history collection for personalization (off by
     /// default — matches Cotypist's own default). Nothing collected here ever
     /// leaves the Mac; see `TypingHistoryStore`.
+    /// How strongly the author's own phrasing steers suggestions:
+    /// "gentle" | "balanced" | "strong" (Cotypist's personalization strength).
+    @Published var personalizationStrength: String {
+        didSet { defaults.set(personalizationStrength, forKey: Keys.personalizationStrength) }
+    }
+    /// Also learn from text written without accepting any suggestion.
+    @Published var recordWithoutAccepts: Bool {
+        didSet { defaults.set(recordWithoutAccepts, forKey: Keys.recordWithoutAccepts) }
+    }
+    /// Log-space bonus for the author's own continuation, and the factor on the
+    /// show bar for a phrase they've used repeatedly.
+    var personalization: (bonus: Double, repeatedPhraseBar: Double) {
+        switch personalizationStrength {
+        case "gentle": return (log(1.5), 0.75)
+        case "strong": return (log(6), 0.35)
+        default: return (log(3), 0.5)
+        }
+    }
     @Published var collectTypingHistory: Bool {
         didSet { defaults.set(collectTypingHistory, forKey: Keys.collectTypingHistory) }
     }
@@ -159,6 +177,8 @@ final class AppSettings: ObservableObject {
         writingStyle = defaults.string(forKey: Keys.writingStyle) ?? ""
         customInstructions = defaults.string(forKey: Keys.customInstructions) ?? ""
         collectTypingHistory = defaults.object(forKey: Keys.collectTypingHistory) as? Bool ?? false
+        personalizationStrength = defaults.string(forKey: Keys.personalizationStrength) ?? "balanced"
+        recordWithoutAccepts = defaults.object(forKey: Keys.recordWithoutAccepts) as? Bool ?? true
         disabledDomains = Set(defaults.stringArray(forKey: Keys.disabledDomains) ?? [])
         if let data = defaults.data(forKey: Keys.appOverrides),
            let decoded = try? JSONDecoder().decode([String: AppOverride].self, from: data) {
@@ -231,6 +251,8 @@ final class AppSettings: ObservableObject {
         static let writingStyle = "writingStyle"
         static let customInstructions = "customInstructions"
         static let collectTypingHistory = "collectTypingHistory"
+        static let personalizationStrength = "personalizationStrength"
+        static let recordWithoutAccepts = "recordWithoutAccepts"
         static let disabledDomains = "disabledDomains"
         static let appOverrides = "appOverrides"
         static let verboseLog = "verboseLog"

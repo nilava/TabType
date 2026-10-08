@@ -43,6 +43,7 @@ final class LlamaEngine {
         if AppSettings.shared.collectTypingHistory || request.learnsFromWriting,
            let hint = PersonalIndex.shared.hint(after: request.beforeCursor) {
             options.hint = Array(hint.text.utf8)
+            options.hintBonus = AppSettings.shared.personalization.bonus
             hintSupport = hint.support
         }
         let cacheKey = "\(models.loadedID ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
@@ -71,7 +72,7 @@ final class LlamaEngine {
         var threshold = options.showThreshold * (midWord ? 0.75 : 0.5)
         // A phrase the author has used repeatedly earns a lower bar still (eval:
         // +13% accepted characters on a repeat-writer set).
-        if result.followsHint && hintSupport >= 2 { threshold *= 0.5 }
+        if result.followsHint && hintSupport >= 2 { threshold *= AppSettings.shared.personalization.repeatedPhraseBar }
         // Lookahead (speculative) results stay out of the statistics.
         let quiet = request.speculative
         guard result.confidence >= threshold else {

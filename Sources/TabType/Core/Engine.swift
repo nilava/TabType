@@ -138,9 +138,15 @@ final class Engine {
 
     /// Keep the text written in the field being left (a draft, email, note…).
     private func recordFieldWriting() {
+        defer { acceptedInCurrentText = false }
         guard let ax = lastAXInput, learnsFromWriting(ax.bundleId) else { return }
+        guard settings.recordWithoutAccepts || acceptedInCurrentText else { return }
         WritingStore.shared.record(ax.text, bundleId: ax.bundleId, fieldKey: ax.windowTitle, kind: .field)
     }
+
+    /// A suggestion was accepted in the text being written (see
+    /// `AppSettings.recordWithoutAccepts`).
+    private var acceptedInCurrentText = false
 
     /// Snapshot the just-sent message (Return pressed / field cleared). Prefers
     /// the last AX snapshot of the field over the keystroke buffer.
@@ -155,9 +161,10 @@ final class Engine {
         }
         lastAXInput = nil
         guard text.count >= 4 else { return }
-        if learnsFromWriting(bundleId) {
+        if learnsFromWriting(bundleId), settings.recordWithoutAccepts || acceptedInCurrentText {
             WritingStore.shared.record(text, bundleId: bundleId, fieldKey: nil, kind: .message)
         }
+        acceptedInCurrentText = false
         var list = recentInputs[bundleId] ?? []
         if list.last != text {
             list.append(SecretSanitizer.sanitize(String(text.suffix(300))))
@@ -537,6 +544,7 @@ final class Engine {
         alternatives.hide()
         overlay.hide()
         session.clear()
+        acceptedInCurrentText = true
         let toInsert = word + (settings.includeTrailingSpace ? " " : "")
         buffer += toInsert
         Statistics.shared.recordAccepted(wordCount: 1)
@@ -1952,6 +1960,7 @@ final class Engine {
         buffer += toInsert
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
             .insertionStrategy
+        acceptedInCurrentText = true
         let wordCount = toInsert.split(whereSeparator: { $0 == " " || $0 == "\n" }).count
         Statistics.shared.recordAccepted(wordCount: max(wordCount, toInsert.isEmpty ? 0 : 1))
 
