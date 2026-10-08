@@ -97,3 +97,17 @@ final class SettleTests: XCTestCase {
         XCTAssertFalse(Engine.sameCaret(a, CGRect(x: 100, y: 50, width: 1, height: 22)))
     }
 }
+
+final class SpliceTests: XCTestCase {
+    func testTypedAheadIntoSuggestion() {
+        XCTAssertEqual(Engine.splice(" at it", requested: "take a look", current: "take a look a"), "t it")
+        XCTAssertEqual(Engine.splice("ing the report", requested: "I am send", current: "I am sending "), "the report")
+    }
+
+    func testDivergentDeletedOrUsedUp() {
+        XCTAssertNil(Engine.splice(" at it", requested: "take a look", current: "take a look o"))
+        XCTAssertNil(Engine.splice(" at it", requested: "take a look", current: "take a loo"))
+        XCTAssertNil(Engine.splice(" at", requested: "take a look", current: "take a look at"))
+        XCTAssertNil(Engine.splice(" at", requested: "take a look", current: "take a look"))
+    }
+}

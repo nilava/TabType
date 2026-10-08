@@ -65,6 +65,13 @@ final class Engine {
     private var caretAnchor: CGRect?
     /// Screen/transcript capture scheduled for the next typing pause.
     private var pauseCapture: DispatchWorkItem?
+    /// The generation running now (not lookaheads), and whether newer typing is
+    /// waiting on it: a keystroke that only EXTENDS its input lets it finish and
+    /// splices its result instead of cancelling ~90ms of work (Cotypist's
+    /// in-flight decode deferral).
+    private var inFlight: (input: String, id: Int)?
+    private var inFlightCounter = 0
+    private var deferredWhileInFlight = false
     /// One-shot flag so the disabled state is logged once, not per keystroke.
     private var loggedDisabled = false
     /// One-shot bypass of prediction gates (force-activate shortcut).
@@ -784,8 +791,9 @@ final class Engine {
             return
         }
 
-        // Any other edit invalidates the shown suggestion.
-        clearSuggestion()
+        // Any other edit invalidates the shown suggestion. Typing (not deleting)
+        // keeps a running generation alive for splicing.
+        clearSuggestion(keepGeneration: !isDeletion)
 
         let bundleId = AccessibilityBridge.frontmostBundleId()
         let policy = AppPolicyStore.policy(forBundleId: bundleId)
@@ -1133,6 +1141,15 @@ final class Engine {
         if ctx.dedupKey == lastPredictedPrompt { return }
         lastPredictedPrompt = ctx.dedupKey
 
+        // A generation for an earlier prefix of this text is still running: let it
+        // finish (it's at most ~100ms away) and splice its result, rather than
+        // cancel it and start over.
+        if let running = inFlight, ctx.input != running.input, ctx.input.hasPrefix(running.input) {
+            deferredWhileInFlight = true
+            lastPredictedPrompt = ""   // the follow-up run must not be deduped
+            return
+        }
+
         let engine = router.current
         let clipboard = settings.useClipboardContext ? freshClipboardText() : ""
         var req = CompletionRequest(
@@ -1168,9 +1185,19 @@ final class Engine {
                 return
             }
             Statistics.shared.record(.requested)
+            self.inFlightCounter += 1
+            let id = self.inFlightCounter
+            self.inFlight = (ctx.input, id)
             let raw = await engine.complete(req)
+            if self.inFlight?.id == id { self.inFlight = nil }
             await self.handlePredictionResult(
                 raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt)
+            // Typing that waited on this generation: if the splice didn't produce
+            // a ghost, predict for what's in the field now.
+            if self.deferredWhileInFlight, self.inFlight == nil {
+                self.deferredWhileInFlight = false
+                if self.currentSuggestion == nil { self.schedulePrediction() }
+            }
         }
     }
 
@@ -1182,6 +1209,16 @@ final class Engine {
         let lower = partial.lowercased()
         let earlier = context.lowercased().dropLast(partial.count)
         return !earlier.split(whereSeparator: { !$0.isLetter }).contains { $0.hasPrefix(lower) }
+    }
+
+    /// What's left of `suggestion` (made for `requested`) once the field holds
+    /// `current` — when the user typed exactly its start. nil when they typed
+    /// something else, deleted, or used it up.
+    nonisolated static func splice(_ suggestion: String, requested: String, current: String) -> String? {
+        guard current != requested, current.hasPrefix(requested) else { return nil }
+        let typed = current.dropFirst(requested.count)
+        guard suggestion.hasPrefix(typed), suggestion.count > typed.count else { return nil }
+        return String(suggestion.dropFirst(typed.count))
     }
 
     /// The token the typo gate should inspect: the trailing letter-run when the caret
@@ -1241,7 +1278,15 @@ final class Engine {
         // Same guard the late-coalesced path has always had.
         let fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
                                          inputChars: AppSettings.inputContextChars)
-        switch session.evaluate(suggestion, requestedInput: ctxInput, currentInput: fresh.input) {
+        // Splice: the user typed ahead, and what they typed is the start of this
+        // suggestion — show the rest of it for the text as it is now.
+        var requestedInput = ctxInput
+        if let tail = Engine.splice(suggestion, requested: ctxInput, current: fresh.input) {
+            Log.shared.debug("predict -> spliced \"\(suggestion)\" → \"\(tail)\" after typing ahead")
+            suggestion = tail
+            requestedInput = fresh.input
+        }
+        switch session.evaluate(suggestion, requestedInput: requestedInput, currentInput: fresh.input) {
         case .present:
             break
         case .stale(let rekick):
@@ -1270,7 +1315,7 @@ final class Engine {
         // Placement resolves inside the settle gate: presentation waits for a
         // typing pause and reads the caret THEN (mid-burst reads are stale).
         presentWhenSettled(suggestion: suggestion, isNewSuggestion: true, allowWrap: allowWrap)
-        startLookahead(after: suggestion, input: ctxInput, request: req)
+        startLookahead(after: suggestion, input: requestedInput, request: req)
     }
 
     /// Compute the continuation of `input + suggestion` while `suggestion` is shown.
@@ -1657,10 +1702,12 @@ final class Engine {
         accessory.show(near: windowRect)
     }
 
-    private func clearSuggestion() {
+    /// `keepGeneration`: typing ahead — let a running generation finish so its
+    /// result can be spliced (see `inFlight`).
+    private func clearSuggestion(keepGeneration: Bool = false) {
         debounceWork?.cancel()
         scheduleToken += 1   // invalidate any in-flight host-publish poll
-        router.cancelInFlight()
+        if !keepGeneration { router.cancelInFlight() }
         session.clear()
         hostExpectedLen = nil
         alternatives.hide()
