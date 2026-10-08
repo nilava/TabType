@@ -238,12 +238,13 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 
 ## TODO
 
-### Phase 0 — Foundations
-- [ ] Create branch `v2-rewrite`; freeze v1 on `main`
-- [ ] Add llama.cpp XCFramework binaryTarget; build + sign via `Scripts/build.sh`
-- [ ] Spike: load a GGUF, tokenize, decode, read logits from Swift (smoke test in CLI)
-- [ ] `tabtype-eval` CLI skeleton with JSONL case format and metrics
-- [ ] Build initial eval set (opt-in own writing export + public corpus), record v1 baseline numbers
+### Phase 0 — Foundations ✅
+- [x] Create branch `v2-rewrite`; freeze v1 on `main`
+- [x] Add llama.cpp XCFramework binaryTarget (b11490); embed + sign via `Scripts/build.sh`
+- [x] Spike: load a GGUF, tokenize, decode, read logits from Swift (`tabtype-eval smoke`)
+- [x] `tabtype-eval` CLI with JSONL case format, Tab-simulation metrics, reports
+- [x] Seed eval set (32 entries → 192 cases); v1 baseline recorded via app `--eval` mode (see `eval/README.md`)
+- [ ] Add a larger corpus: opt-in export of own writing + a public chat/email corpus
 
 ### Phase 1 — Inference runtime
 - [ ] `LlamaRuntime` actor: load/unload, context params, Metal offload, cancellation by generation id

@@ -1,9 +1,11 @@
 #!/bin/bash
 # TabType build helper.
-#   ./Scripts/build.sh gencli   — build the inference validation CLI
+#   ./Scripts/build.sh eval     — build the tabtype-eval quality harness (release)
 #   ./Scripts/build.sh app      — build TabType and bundle TabType.app into dist/
 #
-# Requires full Xcode (MLX compiles Metal shaders; `swift build` cannot).
+# The app requires full Xcode (MLX compiles Metal shaders; `swift build` cannot).
+# tabtype-eval only uses llama.cpp, whose Metal kernels are embedded, so plain
+# `swift build` is enough for it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,9 +25,9 @@ build_scheme() {
 
 cmd="${1:-app}"
 case "$cmd" in
-gencli)
-    build_scheme
-    echo "Built: $PRODUCTS/tabtype-gencli"
+eval)
+    swift build -c release --product tabtype-eval
+    echo "Built: $ROOT/.build/release/tabtype-eval"
     ;;
 app)
     build_scheme
@@ -37,6 +39,17 @@ app)
 
     # Executable
     cp "$PRODUCTS/TabType" "$APP/Contents/MacOS/TabType"
+
+    # llama.cpp (binary XCFramework via TabTypeKit) — embed and point the
+    # executable's rpath at Contents/Frameworks.
+    mkdir -p "$APP/Contents/Frameworks"
+    LLAMA_FW="$(find "$PRODUCTS" -maxdepth 2 -name "llama.framework" -type d | head -1)"
+    if [ -n "$LLAMA_FW" ]; then
+        cp -R "$LLAMA_FW" "$APP/Contents/Frameworks/"
+        install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/TabType" 2>/dev/null || true
+    else
+        echo "WARNING: llama.framework not found in build products — the app will not launch." >&2
+    fi
 
     # SwiftPM resource bundles (emoji.json, tokenizer configs, …). These are found at
     # runtime via `Bundle.module`, whose accessor searches Bundle.main.resourceURL
@@ -84,7 +97,7 @@ app)
     echo "Run:  open \"$APP\"   (or: \"$APP/Contents/MacOS/TabType\" to see logs)"
     ;;
 *)
-    echo "usage: $0 {gencli|app}" >&2
+    echo "usage: $0 {eval|app}" >&2
     exit 1
     ;;
 esac

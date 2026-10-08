@@ -8,7 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "TabType", targets: ["TabType"]),
-        .executable(name: "tabtype-gencli", targets: ["GenCLI"]),
+        .executable(name: "tabtype-eval", targets: ["TabTypeEval"]),
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.0.0"),
@@ -20,9 +20,29 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-jinja.git", "2.0.0"..<"2.4.0"),
     ],
     targets: [
+        // llama.cpp (Metal) — the v2 inference engine. Pinned release XCFramework;
+        // bump the tag and checksum together (`swift package compute-checksum`).
+        .binaryTarget(
+            name: "llama",
+            url: "https://github.com/ggml-org/llama.cpp/releases/download/b11490/llama-b11490-xcframework.zip",
+            checksum: "bc19f561ae2504cb2b3e7b189f44c8a81f8aa0fd84f70b9e81c2ff92a98a086c"
+        ),
+        // v2 core: inference runtime, decoder, prompting, evaluation. Shared by the
+        // app and the eval CLI.
+        .target(
+            name: "TabTypeKit",
+            dependencies: ["llama"],
+            path: "Sources/TabTypeKit"
+        ),
+        .executableTarget(
+            name: "TabTypeEval",
+            dependencies: ["TabTypeKit"],
+            path: "Sources/TabTypeEval"
+        ),
         .executableTarget(
             name: "TabType",
             dependencies: [
+                "TabTypeKit",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
@@ -48,22 +68,15 @@ let package = Package(
                 .process("Resources/frequency_dictionary_ur.txt"),
             ]
         ),
-        .executableTarget(
-            name: "GenCLI",
-            dependencies: [
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "HuggingFace", package: "swift-huggingface"),
-                .product(name: "Tokenizers", package: "swift-transformers"),
-            ],
-            path: "Sources/GenCLI"
-        ),
         .testTarget(
             name: "TabTypeTests",
             dependencies: ["TabType"],
             path: "Tests/TabTypeTests"
+        ),
+        .testTarget(
+            name: "TabTypeKitTests",
+            dependencies: ["TabTypeKit"],
+            path: "Tests/TabTypeKitTests"
         ),
     ]
 )
