@@ -64,8 +64,14 @@ what changes is how much wrong text follows a right first word.
 | 2 · 0.3 | 3.16 | 60.8% | 0.39 |
 | 8 · 0.3 (previous default) | 3.43 | 54.9% | 0.69 |
 | 2 · 0.5 | 2.82 | 68.6% | 0.28 |
-| **4 · 0.5 (default)** | **2.92** | **66.7%** | **0.33** |
+| 4 · 0.5 | 2.92 | 66.7% | 0.33 |
 | 4 · 0.7 | 2.68 | 70.6% | 0.26 |
+| 4 · none (Cotypist-style: run to the cap) | 3.81 | 19.6% | 1.67 |
+| **4 · 0.2 (default)** | **3.62** | **39.2%** | **0.95** |
+
+0.5 looked best on paper but in real typing made almost every suggestion one
+word (the next word rarely clears 0.5), so a Tab chain needed a new prediction
+per word. 0.2 keeps ~95% of the uncapped characters with ~40% fewer wrong words.
 
 Capture noise (`--noise`, 4 words · 0.5): light chrome changes nothing; a window's
 worth of unrelated text costs ~3 points of precision (73.2 → 70.3%, wrong-show
