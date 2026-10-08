@@ -204,8 +204,8 @@ final class GenerationGateTests: XCTestCase {
 }
 
 final class BeamSearchTests: XCTestCase {
-    /// The beam ranks whole phrases: "look into" (≈0.45 × 1) beats "take a"
-    /// (≈0.55 × 1/3) even though "take" alone is the likelier first word.
+    /// Searching from every first word, the beam ranks whole phrases: "look into"
+    /// (≈0.45 × 1) beats "take a" (≈0.55 × 1/3) though "take" alone is likelier.
     func testBeamPrefersTheMoreProbablePhrase() throws {
         let m = FakeModel(pieces: ["<eos>", " take", " look", " a", " the", " it", " into"], rules: [
             "I will": [" take": 3.0, " look": 2.8],
@@ -216,6 +216,7 @@ final class BeamSearchTests: XCTestCase {
         var options = DecoderOptions()
         options.maxWords = 2
         options.extensionThreshold = 0
+        options.beamFromBestFirstWord = false
         let r = try XCTUnwrap(CompletionDecoder.complete("I will", model: m, options: options))
         XCTAssertEqual(r.text, " look into")
         XCTAssertEqual(r.confidence, 0.45, accuracy: 0.03)

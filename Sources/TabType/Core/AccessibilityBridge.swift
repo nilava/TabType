@@ -37,6 +37,46 @@ final class AXFocusObserver {
     }
 }
 
+/// The focused field's own change notifications — caret moved, text changed,
+/// field gone — so placement reacts the moment the app reports a change instead
+/// of only on its next poll (how Cotypist tracks the field).
+final class AXFieldObserver {
+    private final class Box {
+        let handler: () -> Void
+        init(_ handler: @escaping () -> Void) { self.handler = handler }
+    }
+
+    let element: AXUIElement
+    private let box: Box
+    private var observer: AXObserver?
+
+    init?(pid: pid_t, element: AXUIElement, handler: @escaping () -> Void) {
+        self.element = element
+        box = Box(handler)
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            Unmanaged<Box>.fromOpaque(refcon).takeUnretainedValue().handler()
+        }
+        var obs: AXObserver?
+        guard AXObserverCreate(pid, callback, &obs) == .success, let obs else { return nil }
+        var any = false
+        for name in [kAXSelectedTextChangedNotification, kAXValueChangedNotification,
+                     kAXUIElementDestroyedNotification] {
+            if AXObserverAddNotification(obs, element, name as CFString,
+                                         Unmanaged.passUnretained(box).toOpaque()) == .success { any = true }
+        }
+        guard any else { return nil }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
+        observer = obs
+    }
+
+    deinit {
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        }
+    }
+}
+
 /// Thin wrappers over the macOS Accessibility (AX) API for reading the focused
 /// text element, the text preceding the caret, and the caret's screen rectangle.
 enum AccessibilityBridge {

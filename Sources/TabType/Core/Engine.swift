@@ -63,6 +63,21 @@ final class Engine {
     private var lastKeystrokeAt = Date.distantPast
     /// Caret rect read just before the latest keystroke reached the app.
     private var caretAnchor: CGRect?
+    /// TabType's own copy of the text before the caret, with keystrokes applied
+    /// as they're typed (Cotypist's pending edits): predictions start from it at
+    /// once instead of waiting for the app to publish each keystroke over AX.
+    /// `axBaseline` is the last text the app itself reported; while AX still
+    /// shows it, the app is lagging and the local copy is the truth. Any other
+    /// AX text means the app caught up — or changed something (autocorrect, an
+    /// input method) — and replaces the copy.
+    private var expectedInput: String?
+    private var axBaseline: String?
+    private var expectedLimit = AppSettings.inputContextChars
+
+    /// Notifications from the focused field; a pending placement re-checks the
+    /// caret the moment one arrives (polling stays as the backstop).
+    private var fieldObserver: AXFieldObserver?
+    private var pendingPlacement: (() -> Void)?
     /// Screen/transcript capture scheduled for the next typing pause.
     private var pauseCapture: DispatchWorkItem?
     /// The generation running now (not lookaheads), and whether newer typing is
@@ -179,6 +194,8 @@ final class Engine {
     @discardableResult
     func start() -> Bool {
         guard !isRunning else { return true }
+        // A hung app must not stall typing: cap every AX call (Cotypist does too).
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
         wireCallbacks()
         guard monitor.start() else { return false }
         installDismissObservers()
@@ -278,6 +295,7 @@ final class Engine {
         ) { _ in
             MainActor.assumeIsolated {
                 let hadSuggestion = self.currentSuggestion != nil
+                self.dropPendingEdits()   // a click can move the caret
                 // Even without a ghost, a click can move text focus (e.g. web
                 // navigation) — the accessory button must follow.
                 guard hadSuggestion || self.settings.showAccessoryButton else { return }
@@ -333,6 +351,7 @@ final class Engine {
                 guard let self else { return }
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
+                self.dropPendingEdits()
                 self.recordFieldWriting()
                 self.lastAXInput = nil
                 self.buffer = ""
@@ -470,6 +489,7 @@ final class Engine {
             .insertionStrategy
         DispatchQueue.main.async {
             self.markEdit()
+            self.dropPendingEdits()   // text changed other than by typing
             TextInserter.insert(word, strategy: strategy)
         }
     }
@@ -488,6 +508,7 @@ final class Engine {
             .flatMap { AccessibilityBridge.textLength(of: $0) }
         DispatchQueue.main.async {
             self.markEdit()
+            self.dropPendingEdits()   // text changed other than by typing
             TextInserter.insert(toInsert, strategy: strategy)
             self.hostBaselineLen = baselineLen
             self.hostExpectedLen = baselineLen.map { $0 + toInsert.utf16.count }
@@ -691,6 +712,7 @@ final class Engine {
         let navKeys: Set<Int64> = [36, 123, 124, 125, 126, 116, 121, 115, 119] // return, arrows, page/home/end
         if navKeys.contains(keyCode) {
             if inlineCommand.isActive { inlineCommand.cancel() }
+            dropPendingEdits()   // the caret moves, or the message is sent
             // Return in a chat app usually SENDS — remember what was said, so the
             // next suggestion can continue the user's side of the conversation.
             if keyCode == 36, !flags.contains(.maskShift) {
@@ -747,6 +769,7 @@ final class Engine {
         if pid != lastFocusedPID {
             lastFocusedPID = pid
             buffer = ""
+            dropPendingEdits()
             if pid != 0 { AccessibilityBridge.enableEnhancedAccessibility(pid: pid) }
             updateAccessoryButton()
 
@@ -758,6 +781,8 @@ final class Engine {
                 ScreenContextProvider.shared.refreshIfStale()
             }
         }
+
+        applyPendingEdit(chars: chars, isDeletion: isDeletion)
 
         // Maintain fallback buffer.
         if isDeletion {
@@ -857,9 +882,11 @@ final class Engine {
         let deadline: TimeInterval = minSettle ?? (policy.laggyCaret ? 0.4 : 0.12)
         let keystrokeAt = lastKeystrokeAt
         var previous: CGRect?
+        var placed = false
+        observeFocusedField()
 
         func attempt() {
-            guard currentSuggestion == suggestion, keystrokeAt == lastKeystrokeAt else { return }
+            guard !placed, currentSuggestion == suggestion, keystrokeAt == lastKeystrokeAt else { return }
             let element = AccessibilityBridge.focusedElement()
             let caretRect = element.flatMap { AccessibilityBridge.caretRect(of: $0) }
             let elapsed = Date().timeIntervalSince(keystrokeAt)
@@ -870,16 +897,75 @@ final class Engine {
                 previous = caretRect
             }
             guard ready else {
+                pendingPlacement = attempt
                 DispatchQueue.main.asyncAfter(deadline: .now() + min(0.016, max(0.001, deadline - elapsed))) {
                     attempt()
                 }
                 return
             }
+            placed = true
+            pendingPlacement = nil
             let windowRect = element.flatMap { ContextReader.windowRect(of: $0) }
             present(suggestion: suggestion, inlineCaret: caretRect, windowRect: windowRect,
                     policy: policy, isNewSuggestion: isNewSuggestion, allowWrap: allowWrap)
         }
         attempt()
+    }
+
+    /// Apply a keystroke to the local copy of the field (see `expectedInput`).
+    private func applyPendingEdit(chars: String, isDeletion: Bool) {
+        guard var text = expectedInput else { return }
+        if isDeletion {
+            guard !text.isEmpty else { expectedInput = nil; return }
+            text.removeLast()
+        } else {
+            // Only plain text keeps the copy exact; anything else re-reads AX.
+            guard !chars.isEmpty, chars.allSatisfy({ !$0.isNewline || $0 == "\n" }),
+                  !chars.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && $0 != "\n" })
+            else { expectedInput = nil; return }
+            text += chars.replacingOccurrences(of: "\r", with: "\n")
+            if text.count > expectedLimit { text = String(text.suffix(expectedLimit)) }
+        }
+        expectedInput = text
+    }
+
+    /// The text before the caret as it is now: the app's AX text, unless the
+    /// app is still showing what it showed before our pending keystrokes.
+    private func reconcile(axInput: String) -> String {
+        guard let expected = expectedInput, let baseline = axBaseline else {
+            expectedInput = axInput
+            axBaseline = axInput
+            return axInput
+        }
+        if axInput == baseline, expected != baseline { return expected }   // app lagging
+        // Partly caught up (two keys typed, one shown): still behind the copy.
+        if axInput != expected, expected.hasPrefix(axInput), axInput.hasPrefix(baseline) {
+            axBaseline = axInput
+            return expected
+        }
+        if axInput != expected {
+            Log.shared.debug("pending edits: field differs from the local copy — re-reading it")
+        }
+        expectedInput = axInput
+        axBaseline = axInput
+        return axInput
+    }
+
+    /// Forget the local copy (focus/caret moved, text changed elsewhere).
+    private func dropPendingEdits() {
+        expectedInput = nil
+        axBaseline = nil
+    }
+
+    /// Watch the focused field's own notifications (re-created when focus moves).
+    private func observeFocusedField() {
+        guard let element = AccessibilityBridge.focusedElement() else { fieldObserver = nil; return }
+        if let current = fieldObserver, CFEqual(current.element, element) { return }
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        fieldObserver = AXFieldObserver(pid: pid, element: element) { [weak self] in
+            MainActor.assumeIsolated { self?.pendingPlacement?() }
+        }
     }
 
     /// The caret has left `anchor` (a typed or deleted character moved it).
@@ -903,7 +989,8 @@ final class Engine {
             let work = DispatchWorkItem { [weak self] in
                 guard let self, token == self.scheduleToken else { return }
                 let elapsed = Date().timeIntervalSince(start)
-                if self.hostPublished() || elapsed > 0.4 {
+                // With a local copy of the field, there's nothing to wait for.
+                if self.expectedInput != nil || self.hostPublished() || elapsed > 0.4 {
                     self.runPrediction()
                 } else {
                     poll(0.025)
@@ -930,6 +1017,7 @@ final class Engine {
         let deleteCount = token.count + 1   // token + boundary
         buffer = String(buffer.dropLast(deleteCount)) + emoji + String(boundary)
         DispatchQueue.main.async {
+            self.dropPendingEdits()   // text changed other than by typing
             TextInserter.backspace(count: deleteCount)
             TextInserter.insert(emoji + String(boundary), strategy: .keystroke)
         }
@@ -957,6 +1045,7 @@ final class Engine {
             guard self.buffer.hasSuffix(expectedSuffix) else { return }  // tail unchanged
             let deleteCount = expectedSuffix.count
             self.buffer = String(self.buffer.dropLast(deleteCount)) + corrected + boundary
+            self.dropPendingEdits()   // text changed other than by typing
             TextInserter.backspace(count: deleteCount)
             TextInserter.insert(corrected + boundary, strategy: .keystroke)
             Log.shared.debug("autocorrect: \(wordStr) -> \(corrected)")
@@ -1067,11 +1156,17 @@ final class Engine {
         let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
         let screenContext = screenContextEnabled
             ? ScreenContextProvider.shared.contextText(for: bundleId, cap: screenCap, host: host) : ""
-        let ctx = ContextReader.gather(
+        expectedLimit = policy.inputContextChars ?? AppSettings.inputContextChars
+        var ctx = ContextReader.gather(
             fallbackBuffer: buffer,
             screenContext: screenContext,
-            inputChars: policy.inputContextChars ?? AppSettings.inputContextChars,
+            inputChars: expectedLimit,
             wantsDocumentHead: policy.documentProfile)
+        let current = reconcile(axInput: ctx.input)
+        if current != ctx.input {
+            ctx.input = current
+            ctx.dedupKey += "|pending|" + current
+        }
 
         // Google Docs renders to canvas — AX text is unavailable until the user
         // enables its accessibility mode. Tell them ONCE how to fix it.
@@ -1276,8 +1371,9 @@ final class Engine {
         // The field may have changed while the model was generating (more typing,
         // deletions, Cmd+A wipe) — a result for stale input must never be shown.
         // Same guard the late-coalesced path has always had.
-        let fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
-                                         inputChars: AppSettings.inputContextChars)
+        var fresh = ContextReader.gather(fallbackBuffer: buffer, screenContext: req.screenContext,
+                                         inputChars: expectedLimit)
+        fresh.input = reconcile(axInput: fresh.input)
         // Splice: the user typed ahead, and what they typed is the start of this
         // suggestion — show the rest of it for the text as it is now.
         var requestedInput = ctxInput
@@ -1581,6 +1677,7 @@ final class Engine {
             if let (deleteCount, insert) = inlineCommand.accept() {
                 buffer = String(buffer.dropLast(deleteCount)) + insert
                 DispatchQueue.main.async {
+                    self.dropPendingEdits()   // text changed other than by typing
                     TextInserter.backspace(count: deleteCount)
                     TextInserter.insert(insert, strategy: .keystroke)
                 }
@@ -1641,6 +1738,7 @@ final class Engine {
             // insertion like typing, or the remainder ghost paints at the
             // pre-insert caret and overlaps the inserted text.
             self.markEdit()
+            self.applyPendingEdit(chars: toInsert, isDeletion: false)
             TextInserter.insert(toInsert, strategy: strategy)
             if let next {
                 // Re-anchor at the settled caret — unless more Tabs already moved on.
