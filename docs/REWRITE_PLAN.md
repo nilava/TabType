@@ -341,4 +341,5 @@ Reconstructed from Cotypist's behaviour and app structure (no code or prompt tex
 - [x] Gating: typo check on the current word only, minimum field size, terminals only inside AI-agent prompts
 - [x] Text mirror preview (per app); settings pruned (timing, battery, context size, crop mode, mirroring, voice adapter, Tab-inserts-all)
 - [x] Prompt sections with token budgets — built, measured worse with our own delimiters, kept off (`--sections`)
-- [ ] Not yet: personalization strength, battery mode, insertion workarounds, caret retry plan / line-height cache, notarization + auto-update
+- [x] Personalization strength, record-only-with-accepts, On battery power, caret retry plan + line-height cache, hotkey-conflict notice
+- [ ] Not yet: insertion workarounds, delayed alternatives/synonyms, iCloud sync, notarization + auto-update
