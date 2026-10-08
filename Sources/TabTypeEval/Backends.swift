@@ -90,7 +90,7 @@ final class DecoderBackend: CompletionBackend {
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
          template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
-         noisy: Bool = false,
+         noisy: Bool = false, sections: Bool = false,
          history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
         self.noisy = noisy
         self.history = history
@@ -98,7 +98,9 @@ final class DecoderBackend: CompletionBackend {
         self.runtime = runtime
         self.options = options
         self.threshold = threshold
-        self.assembler = template.map { PromptAssembler(template: $0, situationHeader: situationHeader) }
+        let counter: @Sendable (String) -> Int = { [runtime] in runtime.tokenize($0, addSpecial: false, parseSpecial: false).count }
+        self.assembler = template.map { PromptAssembler(template: $0, situationHeader: situationHeader,
+                                                        sections: sections, tokenCount: sections ? counter : nil) }
         self.authorName = authorName
         name = "llama-decoder/\(templateName)" + (history == nil ? "" : "+history")
         model = URL(fileURLWithPath: runtime.modelPath).deletingPathExtension().lastPathComponent

@@ -42,6 +42,14 @@ public struct PromptBudgets: Sendable, Equatable {
     public var screenText = 1500
     public var clipboard = 400
     public var customInstructions = 600
+    /// Sectioned layout: token caps per section and for the whole prompt. When
+    /// the sections together exceed `promptTokens`, context sections give up
+    /// tokens in proportion to their size; the typed text keeps its share.
+    public var promptTokens = 1024
+    public var typedTokens = 512
+    public var screenTokens = 384
+    public var clipboardTokens = 96
+    public var notesTokens = 128
     public init() {}
 }
 
@@ -57,17 +65,27 @@ public struct PromptAssembler: Sendable {
     /// Base models only: open the document with a one-line "where am I" header
     /// (app — window title — field placeholder).
     public var situationHeader: Bool
+    /// Base models: each part of the prompt in its own delimited section with a
+    /// token budget (Cotypist's prompt structure), instead of plain paragraphs.
+    /// Off by default: with our own delimiters it measured worse on seed-v1
+    /// (recall 58.3 → 55.7%); kept for experiments (`tabtype-eval --sections`).
+    public var sections: Bool
+    /// Tokens in a string (the model's tokenizer); nil estimates from UTF-8 bytes.
+    public var tokenCount: (@Sendable (String) -> Int)?
 
     public init(template: ModelTemplate, budgets: PromptBudgets = PromptBudgets(),
-                situationHeader: Bool = false) {
+                situationHeader: Bool = false, sections: Bool = false,
+                tokenCount: (@Sendable (String) -> Int)? = nil) {
         self.template = template
         self.budgets = budgets
         self.situationHeader = situationHeader
+        self.sections = sections
+        self.tokenCount = tokenCount
     }
 
     public func assemble(_ context: PromptContext) -> String {
         switch template.kind {
-        case .base: return assembleBase(context)
+        case .base: return sections ? assembleSections(context) : assembleBase(context)
         case .chat: return assembleChat(context)
         }
     }
@@ -90,6 +108,65 @@ public struct PromptAssembler: Sendable {
         if let screen { parts.append(screen) }
         if let clip { parts.append("Copied text: \(clip)") }
         return join(parts + [typed])
+    }
+
+    // MARK: Base models: delimited, token-budgeted sections
+
+    /// `<situation>`, `<writer>`, `<clipboard>` and `<screen>` (or `<conversation>`)
+    /// sections, stable to volatile, then the typed text in an open `<text>` (or as
+    /// the next conversation line) so the model continues it.
+    private func assembleSections(_ c: PromptContext) -> String {
+        func tokens(_ s: String) -> Int { tokenCount?(s) ?? (s.utf8.count + 3) / 4 }
+        /// The part of `s` that fits in `limit` tokens, from its end or its start.
+        func fit(_ s: String, _ limit: Int, keepEnd: Bool) -> String {
+            guard limit > 0 else { return "" }
+            var text = s
+            var n = tokens(text)
+            while n > limit, !text.isEmpty {
+                let keep = max(1, Int(Double(text.count) * Double(limit) / Double(n) * 0.95))
+                text = keepEnd ? String(text.suffix(keep)) : String(text.prefix(keep))
+                n = tokens(text)
+            }
+            if keepEnd, text.count < s.count, let space = text.firstIndex(where: \.isWhitespace) {
+                text = String(text[text.index(after: space)...])   // start on a word
+            }
+            return text
+        }
+
+        let typed = fit(strip(c.typedText), budgets.typedTokens, keepEnd: true)
+        var notes = clean(c.customInstructions, limit: .max).map { fit($0, budgets.notesTokens, keepEnd: false) }
+        var clip = clean(c.clipboard, limit: .max).map { fit($0, budgets.clipboardTokens, keepEnd: false) }
+        var screen: String? = c.screenText.map { fit(strip($0).trimmingCharacters(in: .whitespacesAndNewlines),
+                                                     budgets.screenTokens, keepEnd: true) }
+        let header = situationHeader ? situation(c) : nil
+
+        // Over the whole-prompt budget: context sections shrink in proportion
+        // to their size (newest screen text and the start of notes survive).
+        let fixed = tokens(typed) + (header.map(tokens) ?? 0) + 24
+        let flexible = [notes, clip, screen].map { $0.map(tokens) ?? 0 }
+        let available = max(0, budgets.promptTokens - fixed)
+        let total = flexible.reduce(0, +)
+        if total > available, total > 0 {
+            let ratio = Double(available) / Double(total)
+            notes = notes.map { fit($0, Int(Double(flexible[0]) * ratio), keepEnd: false) }
+            clip = clip.map { fit($0, Int(Double(flexible[1]) * ratio), keepEnd: false) }
+            screen = screen.map { fit($0, Int(Double(flexible[2]) * ratio), keepEnd: true) }
+        }
+
+        var parts: [String] = []
+        if let header { parts.append("<situation>\(header)</situation>") }
+        if let notes, !notes.isEmpty { parts.append("<writer>\(notes)</writer>") }
+        if let clip, !clip.isEmpty { parts.append("<clipboard>\(clip)</clipboard>") }
+        if let screen, !screen.isEmpty {
+            if c.isConversation {
+                // The author's reply is the next line of the conversation.
+                parts.append("<conversation>\n\(screen)\n\(speaker(c)): \(typed)")
+                return parts.joined(separator: "\n")
+            }
+            parts.append("<screen>\n\(screen)\n</screen>")
+        }
+        parts.append("<text>\n\(typed)")
+        return parts.joined(separator: "\n")
     }
 
     // MARK: Chat models: instruction in the user turn, typed text pre-filled

@@ -111,6 +111,7 @@ case "run":
                                  authorName: option("--author") ?? "Nilava Chowdhury",
                                  situationHeader: arguments.contains("--header"),
                                  noisy: arguments.contains("--noise"),
+                                 sections: arguments.contains("--sections"),
                                  history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
                                  hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
     case let other:
