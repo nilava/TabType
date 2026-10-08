@@ -55,6 +55,38 @@ final class FontFitterTests: XCTestCase {
         XCTAssertFalse(fit.isDarkBackground)
     }
 
+    /// Just typed a space: the caret sits one space-advance right of the ink.
+    func testCaretAfterTypedSpaceAligns() throws {
+        let font = FontFitter.makeFont("Georgia", pixelSize: 18 * scale)
+        let space = CTLineGetTypographicBounds(
+            CTLineCreateWithAttributedString(NSAttributedString(string: " ", attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font])), nil, nil, nil)
+        let image = screenshot("for sending the report over. I will take a look", family: "Georgia", size: 18,
+                               caretX: 600 - space, ink: darkInk, background: .init(r: 1, g: 1, b: 1))
+        let fit = try XCTUnwrap(FontFitter.fit(strip: XCTUnwrap(InkStrip(image: image)),
+                                               text: "Thanks for sending the report over. I will take a look ",
+                                               caretX: 600, scale: scale, expectedSize: 16, knownSize: 18))
+        XCTAssertEqual(fit.family, "Georgia")
+        XCTAssertGreaterThan(fit.confidence, 0.85)
+    }
+
+    /// Transparent capture pixels (holes left by excluded windows) are not ink.
+    func testTransparentPixelsAreBackground() throws {
+        let text = "Sure, I'll take a look right after"
+        let image = screenshot(text, family: "Lato", size: 15, ink: darkInk, background: lightBG)
+        let w = image.width, h = image.height
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = CGContext(data: &rgba, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        for y in 0..<h { for x in 610..<w { for c in 0..<4 { rgba[(y * w + x) * 4 + c] = 0 } } }
+        let holed = ctx.makeImage()!
+        let strip = try XCTUnwrap(InkStrip(image: holed))
+        XCTAssertEqual(strip.columnProfile[620], 0)
+        XCTAssertEqual(strip.background.luminance, lightBG.luminance, accuracy: 0.02)
+    }
+
     func testRecoversSystemFontOnDarkBackground() throws {
         let text = "Thanks for the quick turnaround on this"
         let system = FontFitter.systemFamily

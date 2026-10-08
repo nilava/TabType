@@ -12,6 +12,13 @@ final class Engine {
     private let router: EngineRouter
     private let monitor = KeystrokeMonitor()
     private let overlay = SuggestionOverlay()
+    /// Per field (see `fitKey` in `present`): measured correction from the AX-styled
+    /// baseline estimate to the real text's baseline, in points.
+    private var baselineAdjust: [String: CGFloat] = [:]
+    /// Per field: font family measured from the screen when AX reports only the
+    /// size (Chromium), and the fields already tried.
+    private var fieldFamily: [String: String] = [:]
+    private var familyTried: Set<String> = []
     private let inlineCommand: InlineCommandController
     private let accessory = AccessoryButton()
     private let alternatives = AlternativesController()
@@ -125,6 +132,11 @@ final class Engine {
     /// Handles for the ghost-dismissal observers (app switch, mouse click).
     private var workspaceObserver: NSObjectProtocol?
     private var mouseMonitor: Any?
+    /// Scrolling moves the text under a ghost: hide it, re-place once scrolling stops.
+    private var scrollMonitor: Any?
+    private var scrollSettle: DispatchWorkItem?
+    /// `allowWrap` of the suggestion on screen, for re-placing it.
+    private var shownAllowWrap = false
     private var accessoryToggleObserver: AnyCancellable?
     /// AX focused-element observer for the frontmost app (recreated on app switch).
     private var focusObserver: AXFocusObserver?
@@ -224,6 +236,20 @@ final class Engine {
                 guard let self else { return }
                 if on { self.updateAccessoryButton() } else { self.accessory.hide() }
             }
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { _ in
+            MainActor.assumeIsolated {
+                guard let suggestion = self.currentSuggestion else { return }
+                self.overlay.hide()
+                self.scrollSettle?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, self.currentSuggestion == suggestion else { return }
+                    self.presentWhenSettled(suggestion: suggestion, isNewSuggestion: false,
+                                            allowWrap: self.shownAllowWrap, minSettle: 0)
+                }
+                self.scrollSettle = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+            }
+        }
         // A click that moves the caret or focus makes the ghost stale — but clicks
         // that touch neither (e.g. the ⌘⇧4 screenshot crosshair) must NOT dismiss.
         // So verify the click's consequence instead of assuming it.
@@ -517,6 +543,10 @@ final class Engine {
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
             self.workspaceObserver = nil
+        }
+        if let scrollMonitor {
+            NSEvent.removeMonitor(scrollMonitor)
+            self.scrollMonitor = nil
         }
         if let mouseMonitor {
             NSEvent.removeMonitor(mouseMonitor)
@@ -1254,38 +1284,43 @@ final class Engine {
             guard session.register(suggestion, isNew: isNewSuggestion) else { return }
         }
         if isNewSuggestion { Statistics.shared.recordShown() }
+        shownAllowWrap = allowWrap
         if let caretRect = inlineCaret {
-            // Match the field's real font when available; fall back to a caret-height guess.
+            // The field's own font and text colour, as the app reports them over AX
+            // (AXFont / AXForegroundColor); a caret-height guess only when it doesn't.
             let element = AccessibilityBridge.focusedElement()
             let caret = element.flatMap { AccessibilityBridge.caretOffset(of: $0) } ?? 0
-            let axFont = element.flatMap { AccessibilityBridge.fontAtCaret(of: $0, caret: caret) }
-            let base = axFont ?? NSFont.systemFont(ofSize: max(11, caretRect.height * policy.fontSizeRatio))
-            let font = NSFont(descriptor: base.fontDescriptor,
-                              size: base.pointSize * policy.fontFactor) ?? base
+            let style = element.flatMap { AccessibilityBridge.textStyle(of: $0, caret: caret) }
+            let elementFrame = element.flatMap { AccessibilityBridge.elementFrame(of: $0) }
+            // One placement record per field: app + input box + line height (the
+            // window title changes per browser tab and would force refits).
+            let fitKey = [AccessibilityBridge.frontmostBundleId() ?? "?",
+                          "\(Int(caretRect.height.rounded()))",
+                          "\(Int(elementFrame?.minX ?? 0)),\(Int(elementFrame?.minY ?? 0)),\(Int(elementFrame?.width ?? 0))"].joined(separator: "|")
+            var base = style?.font ?? NSFont.systemFont(ofSize: max(11, caretRect.height * policy.fontSizeRatio))
+            // Size-only reports (Chromium): the family measured for this field.
+            if let style, !style.familyKnown, let family = fieldFamily[fitKey],
+               let matched = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5,
+                                                       size: style.font.pointSize) {
+                base = matched
+            }
+            let font = policy.fontFactor == 1 ? base
+                : NSFont(descriptor: base.fontDescriptor, size: base.pointSize * policy.fontFactor) ?? base
             let anchored = caretRect.offsetBy(dx: 0, dy: policy.verticalOffset)
-            Log.shared.debug("placement app=\(AccessibilityBridge.frontmostBundleId() ?? "?") caretRect=\(caretRect) axFont=\(axFont != nil ? "yes(\(axFont!.pointSize)pt)" : "no, using \(base.pointSize)pt heuristic") fontFactor=\(policy.fontFactor) verticalOffset=\(policy.verticalOffset) anchored=\(anchored)")
-            // Screenshot-assisted colour so ghost text blends with the field's text.
-            var color: NSColor?
-            if settings.useScreenshotAppearance {
+            Log.shared.debug("placement app=\(AccessibilityBridge.frontmostBundleId() ?? "?") caretRect=\(caretRect) axFont=\(style.map { "yes(\($0.font.fontName) \($0.font.pointSize)pt\($0.familyKnown ? "" : ", size only"))" } ?? "no, using \(base.pointSize)pt heuristic") axColor=\(style?.color != nil ? "yes" : "no") fontFactor=\(policy.fontFactor) verticalOffset=\(policy.verticalOffset)")
+            var color = style?.color
+            if color == nil, settings.useScreenshotAppearance {
                 GhostAppearanceProbe.shared.refresh(caretRect: caretRect)
                 color = GhostAppearanceProbe.shared.current?.ghostColor
             }
-            // Mid-line (text follows the caret): an inline ghost would paint over
-            // that text — show a bubble just above the caret instead (Sombra-style).
-            // Only POSITIVE evidence of caret-at-end allows inline rendering; an
-            // unreadable field (Electron) counts as mid-line, never inline-wrap.
-            // Wrap mode only in native apps: in Electron the attributed first-line
-            // indent renders at the wrong x (observed "system" drawn ~54pt left of
-            // the indent target), while the plain single-line path places exactly
-            // at the caret. Single-line + tail truncation is also what Cotypist
-            // shows in these apps.
+            // Wrapped (multi-line) ghost only with positive evidence the caret is at
+            // the end of the text — otherwise wrapped lines would cover the user's.
             let caretAtEnd = element.map(AccessibilityBridge.caretConfirmedAtEnd) == true
-            let fieldRect = (allowWrap && caretAtEnd && !policy.laggyCaret)
-                ? element.flatMap { AccessibilityBridge.elementFrame(of: $0) } : nil
+            let fieldRect = (allowWrap && caretAtEnd) ? elementFrame : nil
+            let leftX = fieldRect == nil ? nil
+                : element.flatMap { AccessibilityBridge.paragraphLeftX(of: $0, caret: caret) }
             // Clamp the ghost to the text INPUT BOX's right edge, not just the
-            // window's — composers are narrower than their windows, and a ghost
-            // clamped only to the window spills past the box.
-            let elementFrame = element.flatMap { AccessibilityBridge.elementFrame(of: $0) }
+            // window's — composers are narrower than their windows.
             let boxRight: CGFloat? = {
                 var limit = windowRect.map { $0.maxX - 8 }
                 if let f = elementFrame, f.width >= 60, f.width <= 2400,
@@ -1295,50 +1330,43 @@ final class Engine {
                 return limit
             }()
 
-            // Measured appearance of this field's text (font, size, baseline,
-            // colour), fitted once from a screenshot — see FieldFitCache.
-            let fitKey = [AccessibilityBridge.frontmostBundleId() ?? "?",
-                          AccessibilityBridge.focusedWindowTitle() ?? "",
-                          "\(Int(caretRect.height.rounded()))",
-                          "\(Int(elementFrame?.minX ?? 0)),\(Int(elementFrame?.width ?? 0))"].joined(separator: "|")
             /// The fitted font, with the app's size adjustment applied.
             func fittedFont(_ fit: FieldFitCache.Fit) -> NSFont {
                 guard policy.fontFactor != 1 else { return fit.font }
                 return NSFont(descriptor: fit.font.fontDescriptor, size: fit.font.pointSize * policy.fontFactor)
                     ?? fit.font
             }
-            /// Rect whose vertically-centred label puts the fitted font's baseline
-            /// exactly on the field text's baseline.
-            func placed(_ fit: FieldFitCache.Fit, at caret: CGRect) -> CGRect {
-                let f = fittedFont(fit)
-                let lineBox = f.ascender + abs(f.descender) + f.leading
-                let y = caret.minY + fit.baselineOffset - f.ascender - (caret.height - lineBox) / 2
-                return CGRect(x: caret.minX, y: y, width: caret.width, height: caret.height)
-            }
 
-            // Paint at a SPECIFIC caret rect and font — the occupancy retry must
-            // render at the position it verified, and the fit / ink-band probe may
-            // have refined the vertical position/size from the real glyph pixels.
-            let paint: (CGRect, NSFont, NSColor?) -> Void = { [weak self] rect, useFont, fittedColor in
+            // Paint at a specific caret rect, font and baseline (nil: derived from
+            // the caret box) — the occupancy retry must render where it verified.
+            let paint: (CGRect, NSFont, NSColor?, CGFloat?) -> Void = { [weak self] rect, useFont, useColor, baseline in
                 guard let self else { return }
                 let shown = self.overlay.showInline(
                     text: suggestion, at: rect, font: useFont,
-                    opacity: self.settings.ghostOpacity, color: fittedColor ?? color,
-                    maxRightX: boxRight,
-                    fieldRect: fieldRect)
+                    opacity: self.settings.ghostOpacity, color: useColor ?? color,
+                    maxRightX: boxRight, fieldRect: fieldRect, leftX: leftX,
+                    baseline: baseline)
                 if !shown {
                     // No room for even a couple of characters inline — HUD pill.
                     self.overlay.showHUD(text: suggestion, windowRect: windowRect)
                 }
             }
+            /// AX-styled baseline: the caret-box estimate plus this field's measured
+            /// correction, once known.
+            let styledBaseline: (CGRect) -> CGFloat = { [weak self] rect in
+                SuggestionOverlay.defaultBaseline(caret: rect, font: font)
+                    + (self?.baselineAdjust[fitKey] ?? 0)
+            }
 
             guard isNewSuggestion else {
-                // Re-paint (type-through, Tab remainder): reuse the field's fit so
-                // the ghost's font never flips between words.
-                if let fit = FieldFitCache.shared.cached(key: fitKey) {
-                    paint(placed(fit, at: anchored), fittedFont(fit), fit.textColor)
+                // Re-paint (type-through, Tab remainder): same font and baseline as
+                // the field's first paint, so nothing flips between words.
+                if style != nil {
+                    paint(anchored, font, nil, styledBaseline(anchored))
+                } else if let fit = FieldFitCache.shared.cached(key: fitKey) {
+                    paint(anchored, fittedFont(fit), fit.textColor, anchored.minY + fit.baselineOffset)
                 } else {
-                    paint(anchored, font, nil)
+                    paint(anchored, font, nil, nil)
                 }
                 return
             }
@@ -1346,10 +1374,9 @@ final class Engine {
             // Final occupancy check: AX caret geometry sometimes lies (stale
             // selection index, wrong y on wrapped lines in Electron) — before
             // painting inline, look at the actual PIXELS where the ghost would go.
-            // Occupied → retry once at a freshly-read caret; still occupied → drop
-            // this cycle (never paint over text). Unknown → trust AX.
+            // Occupied → retry once at a freshly-read caret; still occupied → HUD.
+            // Unknown → trust AX.
             overlay.hide()   // our own previous ghost must not trip the check
-            let hasAXFont = axFont != nil
             Task { [weak self] in
                 guard let self else { return }
                 // Stop the strip well short of the input box's right edge — trailing
@@ -1379,12 +1406,8 @@ final class Engine {
                     occupied = await checkOccupied(target)
                     guard self.currentSuggestion == suggestion else { return }
                     if occupied == true {
-                        // Never paint a ghost over real pixels — but a generated,
-                        // filtered, fresh suggestion should not die silently either
-                        // (dark Electron input bars sit right at the contrast
-                        // threshold and used to eat every suggestion this way).
-                        // The HUD pill is anchored to the window, not the caret,
-                        // so it can't overlap the text.
+                        // Never paint a ghost over real pixels; the HUD pill is
+                        // anchored to the window, so it can't overlap the text.
                         Log.shared.debug("placement: strip still occupied — showing HUD pill instead")
                         Statistics.shared.record(.occupiedFallback)
                         self.overlay.showHUD(text: suggestion, windowRect: windowRect)
@@ -1392,86 +1415,99 @@ final class Engine {
                     }
                 }
 
-                // Best: the field's measured font/size/baseline/colour.
+                // The left strip of real text, for measuring the baseline.
+                let leftStrip = CGRect(x: max(0, target.minX - 180), y: target.minY - 3,
+                                       width: min(170, target.minX), height: target.height + 6)
+
+                // Best: the app told us its font and colour. Paint now; measure this
+                // field's baseline once from the real glyphs and correct if needed.
+                if let style {
+                    paint(target, font, nil, styledBaseline(target))
+                    guard self.settings.useScreenshotAppearance else { return }
+                    // Size-only report: measure the family once (size fixed), which
+                    // also gives the exact baseline.
+                    if !style.familyKnown, self.fieldFamily[fitKey] == nil,
+                       self.familyTried.insert(fitKey).inserted {
+                        let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
+                        if let fit = await FieldFitCache.shared.fit(
+                            caret: target, fieldFrame: elementFrame, key: fitKey + "|family", lineText: lineText,
+                            verbose: self.settings.verboseLog, knownSize: style.font.pointSize),
+                           fit.familyMatched, let family = fit.font.familyName {
+                            guard self.currentSuggestion == suggestion else { return }
+                            self.fieldFamily[fitKey] = family
+                            let matched = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5,
+                                                                    size: font.pointSize) ?? font
+                            let baseline = target.minY + fit.baselineOffset
+                            self.baselineAdjust[fitKey] = baseline
+                                - SuggestionOverlay.defaultBaseline(caret: target, font: matched)
+                            Log.shared.debug("placement: field family \(family) (size \(font.pointSize)pt from AX)")
+                            paint(target, matched, nil, baseline)
+                            return
+                        }
+                    }
+                    guard self.baselineAdjust[fitKey] == nil,
+                          let band = await GhostAppearanceProbe.inkBand(in: leftStrip),
+                          self.currentSuggestion == suggestion else { return }
+                    let bandHeight = band.bottom - band.top
+                    guard bandHeight >= 6, bandHeight <= target.height + 2 else { return }
+                    let estimate = SuggestionOverlay.defaultBaseline(caret: target, font: font)
+                    let delta = band.baseline - estimate
+                    guard abs(delta) <= target.height / 2 else { return }   // a different line
+                    self.baselineAdjust[fitKey] = delta
+                    Log.shared.debug("placement: measured baseline correction \(String(format: "%.1f", delta))pt")
+                    if abs(delta) >= 1 { paint(target, font, nil, estimate + delta) }
+                    return
+                }
+
+                // No style over AX: the field's measured font/size/baseline/colour.
                 if self.settings.useScreenshotAppearance {
                     let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
                     if let fit = await FieldFitCache.shared.fit(caret: target, fieldFrame: elementFrame, key: fitKey,
                                                                 lineText: lineText, verbose: self.settings.verboseLog) {
                         guard self.currentSuggestion == suggestion else { return }
-                        let rect = placed(fit, at: target)
+                        let baseline = target.minY + fit.baselineOffset
                         if policy.laggyCaret, self.settings.textMirroring {
-                            let before = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 40) } ?? ""
-                            var tail = ""
-                            if let lastToken = before.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
-                               !before.hasSuffix(" "), !before.hasSuffix("\n") {
-                                tail = String(lastToken.suffix(24))
-                            }
                             self.overlay.showMirror(
-                                typedTail: tail, suggestion: suggestion, caretRect: rect,
-                                baseline: target.minY + fit.baselineOffset, font: fittedFont(fit),
+                                typedTail: Self.typedTail(element), suggestion: suggestion,
+                                caretRect: target, baseline: baseline, font: fittedFont(fit),
                                 textColor: fit.textColor, backgroundColor: fit.backgroundColor,
                                 ghostOpacity: self.settings.ghostOpacity, maxRightX: boxRight)
                         } else {
-                            paint(rect, fittedFont(fit), fit.textColor)
+                            paint(target, fittedFont(fit), fit.textColor, baseline)
                         }
                         return
                     }
                 }
 
-                // Pixel-true vertical alignment + size: sample the REAL text's ink
-                // band just left of the caret and match the ghost to it — the AX
-                // line box's padding varies per app, centering in it is a guess.
+                // Last resort: size and baseline from the real text's ink band.
                 var useFont = font
-                var rect = target
                 var probedBaseline: CGFloat?
-                let leftStrip = CGRect(x: max(0, target.minX - 180), y: target.minY - 3,
-                                       width: min(170, target.minX), height: target.height + 6)
                 if let band = await GhostAppearanceProbe.inkBand(in: leftStrip) {
                     guard self.currentSuggestion == suggestion else { return }
                     let bandHeight = band.bottom - band.top
-                    // A band taller than the caret's line box means the strip caught
-                    // more than one line of text (or an icon) — distrust it entirely.
+                    // Taller than the caret's line box: the strip caught more than
+                    // one line (or an icon) — distrust it.
                     if bandHeight >= 6, bandHeight <= target.height + 2 {
-                        if !hasAXFont {
-                            // Baseline-to-ascent span ≈ 0.78 × point size for typical
-                            // text (caps/tall letters present in a 170pt strip).
-                            let ascentSpan = band.baseline - band.top
-                            if ascentSpan >= 5 {
-                                let size = min(max(ascentSpan * 1.28, 9), target.height * 0.95)
-                                useFont = NSFont(descriptor: font.fontDescriptor, size: size) ?? font
-                            }
+                        // Baseline-to-ascent span ≈ 0.78 × point size for typical text.
+                        let ascentSpan = band.baseline - band.top
+                        if ascentSpan >= 5 {
+                            let size = min(max(ascentSpan * 1.28, 9), target.height * 0.95)
+                            useFont = NSFont(descriptor: font.fontDescriptor, size: size) ?? font
                         }
-                        // BASELINE-to-BASELINE alignment — the only anchor that's
-                        // independent of which glyphs each text happens to contain
-                        // (ink tops/bottoms shift with letter shapes; baselines don't).
-                        // The label's baseline sits `ascender` below its line-box top,
-                        // and showInline centers that box in `rect`:
-                        //   baseline = rect.minY + (rect.height - lineBox)/2 + ascender
-                        let lineBox = useFont.ascender + abs(useFont.descender) + useFont.leading
-                        let y = band.baseline - useFont.ascender - (target.height - lineBox) / 2
-                        rect = CGRect(x: target.minX, y: y,
-                                      width: target.width, height: target.height)
                         probedBaseline = band.baseline
                         Log.shared.debug("placement: baseline \(String(format: "%.1f", band.baseline)) band \(String(format: "%.0f-%.0f", band.top, band.bottom)) -> font \(String(format: "%.1f", useFont.pointSize))pt")
                     }
                 }
 
-                // Text mirror (Cotypist's rendering): re-render the typed tail +
-                // suggestion ourselves on a field-matched backdrop — exact tail/ghost
-                // alignment by construction. Needs the probed baseline + colours.
+                // Text mirror: re-render typed tail + suggestion on a field-matched
+                // backdrop. Only for laggy apps that report no style.
                 if policy.laggyCaret, self.settings.textMirroring,
                    let baseline = probedBaseline,
                    let appearance = GhostAppearanceProbe.shared.current {
-                    let before = AccessibilityBridge.focusedElement()
-                        .flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 40) } ?? ""
-                    var tail = ""
-                    if let lastToken = before.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
-                       !before.hasSuffix(" "), !before.hasSuffix("\n") {
-                        tail = String(lastToken.suffix(24))
-                    }
+                    let tail = Self.typedTail(AccessibilityBridge.focusedElement())
                     Log.shared.debug("placement: mirror tail=\"\(tail)\"")
                     self.overlay.showMirror(
-                        typedTail: tail, suggestion: suggestion, caretRect: rect,
+                        typedTail: tail, suggestion: suggestion, caretRect: target,
                         baseline: baseline, font: useFont,
                         textColor: appearance.textColor,
                         backgroundColor: appearance.backgroundColor,
@@ -1479,11 +1515,19 @@ final class Engine {
                         maxRightX: boxRight)
                     return
                 }
-                paint(rect, useFont, nil)
+                paint(target, useFont, nil, probedBaseline)
             }
         } else {
             overlay.showHUD(text: suggestion, windowRect: windowRect)
         }
+    }
+
+    /// The partly typed word before the caret (for the text mirror).
+    private static func typedTail(_ element: AXUIElement?) -> String {
+        let before = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 40) } ?? ""
+        guard !before.hasSuffix(" "), !before.hasSuffix("\n"),
+              let last = before.split(whereSeparator: { $0 == " " || $0 == "\n" }).last else { return "" }
+        return String(last.suffix(24))
     }
 
     // MARK: - Accept / dismiss

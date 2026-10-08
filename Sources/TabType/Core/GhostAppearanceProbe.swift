@@ -160,14 +160,25 @@ final class GhostAppearanceProbe: ObservableObject {
         let scale = pixelScale(of: display)
         let config = SCStreamConfiguration()
         // sourceRect is in points, top-left origin relative to the display.
-        config.sourceRect = CGRect(x: rect.minX - display.frame.minX,
-                                   y: rect.minY - displayRectTopLeft(display).minY,
-                                   width: rect.width, height: rect.height)
-        config.width = max(1, Int((rect.width * scale).rounded()))
-        config.height = max(1, Int((rect.height * scale).rounded()))
+        // ScreenCaptureKit rounds a fractional source rect outward to whole points
+        // and then aspect-fits it into width×height, squeezing the content and
+        // leaving transparent columns. So capture the whole-point rect at exactly
+        // `scale`, then crop back to the requested rect.
+        let local = CGRect(x: rect.minX - display.frame.minX,
+                           y: rect.minY - displayRectTopLeft(display).minY,
+                           width: rect.width, height: rect.height)
+        let integral = local.integral
+        config.sourceRect = integral
+        config.width = max(1, Int((integral.width * scale).rounded()))
+        config.height = max(1, Int((integral.height * scale).rounded()))
         config.showsCursor = false
-        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        guard let full = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         else { return nil }
+        let crop = CGRect(x: ((local.minX - integral.minX) * scale).rounded(),
+                          y: ((local.minY - integral.minY) * scale).rounded(),
+                          width: (local.width * scale).rounded(),
+                          height: (local.height * scale).rounded())
+        guard let image = full.cropping(to: crop) else { return nil }
         return (image, scale)
     }
 

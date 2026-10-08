@@ -272,6 +272,30 @@ enum AccessibilityBridge {
     /// zero-length rect if it's close to that anchor's trailing edge; otherwise we
     /// prefer the anchor itself. This is what fixed the "wide gap" ghost-text bug.
     static func caretRect(of element: AXUIElement) -> CGRect? {
+        guard let raw = rawCaretRect(of: element) else { return nil }
+        guard let field = elementFrame(of: element) else { return raw }
+        // A caret outside its own field (expanded by 20pt) is stale geometry.
+        // (A zero-width caret is an "empty" rect to `intersects`, so test its centre.)
+        guard field.insetBy(dx: -20, dy: -20).contains(CGPoint(x: raw.midX, y: raw.midY)) else { return nil }
+        return snappedToSingleLineField(raw, field: field)
+    }
+
+    /// Single-line fields: when the field is shorter than two caret lines and the
+    /// caret's middle falls outside it (an inflated or offset line box), centre the
+    /// caret on the field vertically.
+    static func snappedToSingleLineField(_ caret: CGRect, field: CGRect) -> CGRect {
+        guard caret.height > 0, field.height > 2, field.height < caret.height * 2,
+              caret.midY < field.minY || caret.midY > field.maxY else { return caret }
+        return caret.offsetBy(dx: 0, dy: field.midY - caret.midY)
+    }
+
+    /// Two rects lie on the same visual line: tops and heights agree within 10%.
+    static func sameLine(_ a: CGRect, _ b: CGRect) -> Bool {
+        let h = max(a.height, b.height)
+        return abs(a.minY - b.minY) <= max(1, 0.1 * h) && abs(a.height - b.height) <= max(1, 0.1 * h)
+    }
+
+    private static func rawCaretRect(of element: AXUIElement) -> CGRect? {
         guard let caret = caretOffset(of: element) else {
             if let r = textMarkerCaretRect(element), isValidCaretRect(r) { return r }
             return nil
@@ -299,9 +323,7 @@ enum AccessibilityBridge {
                 }
                 // Trust the zero-length rect only if it's near the anchor (same line,
                 // close horizontally); otherwise the anchor is more reliable.
-                let dx = abs(zero.minX - anchor.maxX)
-                let dy = abs(zero.minY - anchor.minY)
-                if dx <= 24, dy <= 6 { return zero }
+                if abs(zero.minX - anchor.maxX) <= 24, sameLine(zero, anchor) { return zero }
             } else {
                 return zero
             }
@@ -330,26 +352,88 @@ enum AccessibilityBridge {
         return rect
     }
 
-    /// The field's actual font at the caret, read from the AX attributed string.
-    /// Lets the ghost text match the field's font family and size exactly. Tries the
-    /// preceding character first, then the character at/after the caret (helps an
-    /// empty field or a caret at position 0, and gives web content a second chance —
-    /// some WebKit/Chromium implementations only answer for certain ranges).
-    static func fontAtCaret(of element: AXUIElement, caret: Int) -> NSFont? {
-        if let font = font(of: element, at: max(0, caret - 1)) { return font }
-        return font(of: element, at: caret)
+    /// The field's text style at the caret, as the app reports it over AX.
+    struct TextStyle {
+        /// The app's font when its name or family resolves locally, else the system
+        /// font at the reported size.
+        var font: NSFont
+        /// Whether `font` is the app's own face (false: only the size was known).
+        var familyKnown: Bool
+        /// The text colour, when reported.
+        var color: NSColor?
     }
 
-    private static func font(of element: AXUIElement, at location: Int) -> NSFont? {
+    /// The field's font and text colour at the caret, from the AX attributed string.
+    /// Cross-process attributed strings carry `AXFont` (a dictionary of name, family
+    /// and size) and `AXForegroundColor` (a CGColor) — never an `NSFont`. Reads the
+    /// character before the caret (the text the ghost continues), else the one at it.
+    static func textStyle(of element: AXUIElement, caret: Int) -> TextStyle? {
+        if caret > 0, let style = textStyle(of: element, at: caret - 1) { return style }
+        return textStyle(of: element, at: caret)
+    }
+
+    private static func textStyle(of element: AXUIElement, at location: Int) -> TextStyle? {
+        guard location >= 0 else { return nil }
         var cfRange = CFRange(location: location, length: 1)
         guard let rangeValue = AXValueCreate(.cfRange, &cfRange) else { return nil }
         var attrRef: CFTypeRef?
         guard AXUIElementCopyParameterizedAttributeValue(
             element, kAXAttributedStringForRangeParameterizedAttribute as CFString,
-            rangeValue, &attrRef) == .success, let attrRef else { return nil }
-        let attributed = attrRef as! NSAttributedString
-        guard attributed.length > 0 else { return nil }
-        return attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+            rangeValue, &attrRef) == .success,
+            let attributed = attrRef as? NSAttributedString,
+            attributed.length > 0 else { return nil }
+        let attrs = attributed.attributes(at: attributed.length - 1, effectiveRange: nil)
+        var color: NSColor?
+        if let raw = attrs[NSAttributedString.Key("AXForegroundColor")],
+           CFGetTypeID(raw as CFTypeRef) == CGColor.typeID {
+            color = NSColor(cgColor: raw as! CGColor)
+        }
+        if let font = attrs[.font] as? NSFont {
+            return TextStyle(font: font, familyKnown: true, color: color)
+        }
+        guard let info = attrs[NSAttributedString.Key("AXFont")] as? [String: Any],
+              let size = (info["AXFontSize"] as? NSNumber)?.doubleValue,
+              size >= 6, size <= 96 else { return nil }
+        let name = info["AXFontName"] as? String
+        let family = info["AXFontFamily"] as? String
+        let bold = (info["AXFontBold"] as? NSNumber)?.boolValue == true
+        return TextStyle(font: resolveFont(name: name, family: family, size: CGFloat(size), bold: bold),
+                         familyKnown: fontResolves(name: name, family: family),
+                         color: color)
+    }
+
+    /// The reported face if it's installed (or bundled), by PostScript name then
+    /// family; otherwise the system font at the reported size.
+    static func resolveFont(name: String?, family: String?, size: CGFloat, bold: Bool = false) -> NSFont {
+        if let name, let font = NSFont(name: name, size: size) { return font }
+        if let family,
+           let font = NSFontManager.shared.font(withFamily: family, traits: bold ? .boldFontMask : [],
+                                                weight: bold ? 9 : 5, size: size) {
+            return font
+        }
+        return .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+    }
+
+    private static func fontResolves(name: String?, family: String?) -> Bool {
+        if let name, NSFont(name: name, size: 12) != nil { return true }
+        if let family, NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: 12) != nil {
+            return true
+        }
+        return false
+    }
+
+    /// Left edge of the text on the caret's line: the x of the first character of
+    /// the caret's paragraph (wrapped lines of the ghost start there).
+    static func paragraphLeftX(of element: AXUIElement, caret: Int) -> CGFloat? {
+        guard caret > 0, let value = stringValue(of: element) else { return nil }
+        let utf16 = value.utf16
+        let end = min(caret, utf16.count)
+        var start = end
+        let newline = UInt16(UInt8(ascii: "\n"))
+        while start > 0, utf16[utf16.index(utf16.startIndex, offsetBy: start - 1)] != newline { start -= 1 }
+        guard start < end, let rect = boundsForRange(element, location: start, length: 1),
+              rect.height > 2 else { return nil }
+        return rect.minX
     }
 
     /// Whether this element exposes AXTextMarker attributes at all — a signal that
@@ -374,6 +458,8 @@ enum AccessibilityBridge {
             let boundsRef else { return nil }
         var rect = CGRect.zero
         guard AXValueGetValue(boundsRef as! AXValue, .cgRect, &rect) else { return nil }
+        // A collapsed marker's bounds are a caret, not a run of text.
+        guard rect.width <= 200 else { return nil }
         return rect
     }
 
@@ -381,7 +467,7 @@ enum AccessibilityBridge {
     /// apps — notably Electron/web views like Slack — return. Better to show nothing
     /// than to draw ghost text in the wrong place.
     static func isValidCaretRect(_ rect: CGRect) -> Bool {
-        guard rect.width >= 0, rect.height > 1, rect.height < 200 else { return false }
+        guard rect.width >= 0, rect.height > 2, rect.height < 200 else { return false }
         guard rect.origin.x.isFinite, rect.origin.y.isFinite else { return false }
         // Must intersect some screen (AX uses a top-left global origin; compare in
         // that space by flipping each screen's frame).

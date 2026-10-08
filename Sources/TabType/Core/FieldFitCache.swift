@@ -34,7 +34,9 @@ final class FieldFitCache {
 
     /// Cached or freshly measured fit for the field at `caret`. nil when the text
     /// can't be measured (no screen permission, too little text, low confidence).
-    func fit(caret: CGRect, fieldFrame: CGRect?, key: String, lineText: String, verbose: Bool) async -> Fit? {
+    /// `knownSize`: the size the app reported over AX — only the family is fitted.
+    func fit(caret: CGRect, fieldFrame: CGRect?, key: String, lineText: String, verbose: Bool,
+             knownSize: CGFloat? = nil) async -> Fit? {
         if let cached = fits[key], Date().timeIntervalSince(cached.created) < 600 { return cached }
         guard !inFlight.contains(key), CGPreflightScreenCaptureAccess() else { return nil }
         let line = String(lineText.split(separator: "\n", omittingEmptySubsequences: false).last ?? "")
@@ -64,7 +66,8 @@ final class FieldFitCache {
         let scale = shot.scale
         let result = await Task.detached(priority: .userInitiated) { () -> FontFit? in
             guard let strip = InkStrip(image: image) else { return nil }
-            return FontFitter.fit(strip: strip, text: line, caretX: caretX, scale: scale, expectedSize: expected)
+            return FontFitter.fit(strip: strip, text: line, caretX: caretX, scale: scale, expectedSize: expected,
+                                  knownSize: knownSize.map(Double.init))
         }.value
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         if verbose { Self.dump(image, key: key) }
@@ -73,7 +76,7 @@ final class FieldFitCache {
             Log.shared.debug("placement: fit gave no result (\(ms)ms)")
             return nil
         }
-        Log.shared.debug("placement: fit \(result.family) \(String(format: "%.2f", result.pointSize))pt conf \(String(format: "%.2f", result.confidence)) vertical \(String(format: "%.2f", result.verticalConfidence)) baseline +\(String(format: "%.1f", result.baselineFromTop / scale))pt (\(ms)ms)")
+        Log.shared.debug("placement: fit\(knownSize == nil ? "" : " (family only)") \(result.family) \(String(format: "%.2f", result.pointSize))pt conf \(String(format: "%.2f", result.confidence)) vertical \(String(format: "%.2f", result.verticalConfidence)) baseline +\(String(format: "%.1f", result.baselineFromTop / scale))pt (\(ms)ms)")
         let familyMatched = result.confidence >= Self.minimumConfidence
         guard familyMatched || result.verticalConfidence >= Self.minimumVerticalConfidence else { return nil }
         let font = familyMatched ? Self.font(result) : NSFont.systemFont(ofSize: CGFloat(result.pointSize))

@@ -51,12 +51,18 @@ public struct InkStrip {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
 
+        // Transparent pixels carry no screen content (a capture can leave holes
+        // where excluded windows sat) — they are background, never ink.
+        let opaque = (0..<(w * h)).map { rgba[$0 * 4 + 3] >= 128 }
         var lum = [Float](repeating: 0, count: w * h)
         for i in 0..<(w * h) {
             let o = i * 4
             lum[i] = (0.299 * Float(rgba[o]) + 0.587 * Float(rgba[o + 1]) + 0.114 * Float(rgba[o + 2])) / 255
         }
-        let bg = lum.sorted()[lum.count / 2]
+        let opaqueLum = (0..<(w * h)).filter { opaque[$0] }.map { lum[$0] }.sorted()
+        guard opaqueLum.count >= w * h / 4 else { return nil }
+        let bg = opaqueLum[opaqueLum.count / 2]
+        for i in 0..<(w * h) where !opaque[i] { lum[i] = bg }
         let distance = lum.map { abs($0 - bg) }
         // Ink scale: what full-strength text looks like here (95th percentile of
         // clearly-not-background pixels), so faint and bold text both map to ~1.
@@ -66,7 +72,7 @@ public struct InkStrip {
 
         func meanColor(where predicate: (Int) -> Bool) -> RGB? {
             var r = 0.0, g = 0.0, b = 0.0, n = 0.0
-            for i in 0..<(w * h) where predicate(i) {
+            for i in 0..<(w * h) where opaque[i] && predicate(i) {
                 r += Double(rgba[i * 4]); g += Double(rgba[i * 4 + 1]); b += Double(rgba[i * 4 + 2]); n += 1
             }
             return n > 0 ? RGB(r: r / n / 255, g: g / n / 255, b: b / n / 255) : nil
@@ -148,12 +154,16 @@ public enum FontFitter {
     ///   - caretX: caret position in strip pixels.
     ///   - scale: strip pixels per point (backing scale).
     ///   - expectedSize: rough size in points (from the caret height) to centre the search.
+    ///   - knownSize: the exact size when the app reports it (Chromium reports the
+    ///     size but not the family) — only the family is searched.
     public static func fit(strip: InkStrip, text: String, caretX: Double, scale: Double,
                            candidates: [String] = defaultCandidates,
-                           expectedSize: Double) -> FontFit? {
+                           expectedSize: Double, knownSize: Double? = nil) -> FontFit? {
         let line = String(text.split(separator: "\n", omittingEmptySubsequences: false).last ?? "")
-        let trimmed = line.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
-        guard trimmed.count >= 4 else { return nil }
+        // Keep trailing spaces: the caret sits after them, so they advance the
+        // rendered text exactly as on screen.
+        let trimmed = line.replacingOccurrences(of: #"[\r\n]+$"#, with: "", options: .regularExpression)
+        guard trimmed.trimmingCharacters(in: .whitespaces).count >= 4 else { return nil }
 
         struct Trial { var family: String; var size: Double; var score: Double; var baseline: Double; var rowError: Double }
 
@@ -199,7 +209,8 @@ public enum FontFitter {
         }
 
         let available = candidates.filter { fontExists($0) }
-        let low = max(7, (expectedSize * 0.55).rounded(.down)), high = min(48, (expectedSize * 1.15).rounded(.up))
+        let low = knownSize ?? max(7, (expectedSize * 0.55).rounded(.down))
+        let high = knownSize ?? min(48, (expectedSize * 1.15).rounded(.up))
         var shortlist: [Trial] = []
         for family in available {
             for size in stride(from: low, through: high, by: 1) {
@@ -220,7 +231,8 @@ public enum FontFitter {
             leaders.append(system)
         }
         for leader in leaders {
-            for size in stride(from: leader.size - 1, through: leader.size + 1, by: 0.25) {
+            let sizes = knownSize.map { [$0] } ?? Array(stride(from: leader.size - 1, through: leader.size + 1, by: 0.25))
+            for size in sizes {
                 let key = "\(leader.family)|\(size)"
                 guard seen.insert(key).inserted, let t = evaluate(leader.family, size, at: fine) else { continue }
                 finals.append(t)
@@ -318,7 +330,8 @@ public enum FontFitter {
             NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
         ])
         let line = CTLineCreateWithAttributedString(attributed)
-        let advance = CTLineGetTypographicBounds(line, nil, nil, nil) - CTLineGetTrailingWhitespaceWidth(line)
+        // Full advance, trailing spaces included: the caret sits after them.
+        let advance = CTLineGetTypographicBounds(line, nil, nil, nil)
         ctx.textPosition = CGPoint(x: rightX - advance, y: Double(height) - baselineFromTop)
         CTLineDraw(line, ctx)
         return pixels.map { Float($0) / 255 }

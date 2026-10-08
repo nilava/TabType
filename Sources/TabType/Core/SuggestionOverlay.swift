@@ -1,5 +1,55 @@
 import AppKit
 
+/// Draws the ghost run with its own text system: no cell insets, no line-fragment
+/// padding, so x and baseline land exactly where they're computed. Line 1 starts at
+/// `firstLineIndent`; wrapped lines at 0; the last visible line truncates.
+final class GhostTextView: NSView {
+    private let storage = NSTextStorage()
+    private let layout = NSLayoutManager()
+    private let container = NSTextContainer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override var isFlipped: Bool { true }
+
+    /// Lays out `text` in `width`; returns the used height and line 1's baseline
+    /// (from the top).
+    func configure(text: String, font: NSFont, color: NSColor, width: CGFloat,
+                   firstLineIndent: CGFloat, maxLines: Int) -> (height: CGFloat, firstBaseline: CGFloat) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.firstLineHeadIndent = firstLineIndent
+        paragraph.headIndent = 0
+        storage.setAttributedString(NSAttributedString(string: text, attributes: [
+            .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
+        ]))
+        container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        container.maximumNumberOfLines = maxLines
+        container.lineBreakMode = .byTruncatingTail
+        let glyphs = layout.glyphRange(for: container)
+        let used = layout.usedRect(for: container)
+        var baseline = font.ascender
+        if glyphs.length > 0 {
+            let fragment = layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+            baseline = fragment.minY + layout.location(forGlyphAt: 0).y
+        }
+        needsDisplay = true
+        return (ceil(used.maxY), baseline)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let glyphs = layout.glyphRange(for: container)
+        layout.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+    }
+}
+
 /// A borderless, non-activating overlay window that shows the suggestion either as
 /// dimmed inline "ghost text" at the caret (when precise caret bounds are known) or
 /// as a floating pill anchored to the focused window (HUD fallback for Electron /
@@ -10,6 +60,8 @@ final class SuggestionOverlay {
 
     private var panel: NSPanel?
     private let label = NSTextField(labelWithString: "")
+    /// The inline ghost (HUD, bubble and mirror keep using `label`).
+    private let ghost = GhostTextView(frame: .zero)
     private let background = NSVisualEffectView()
     /// Solid backdrop + caret replica for mirror mode (see `showMirror`).
     private let mirrorBackdrop = NSView()
@@ -28,8 +80,10 @@ final class SuggestionOverlay {
         panel.isOpaque = false
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.hidesOnDeactivate = false
+        // Never part of anyone's AX tree (our own hit-tests included).
+        panel.setAccessibilityElement(false)
 
         background.material = .hudWindow
         background.state = .active
@@ -55,6 +109,8 @@ final class SuggestionOverlay {
         container.addSubview(mirrorBackdrop)
         container.addSubview(background)
         container.addSubview(label)
+        container.addSubview(ghost)
+        ghost.isHidden = true
         container.addSubview(caretBar)
         panel.contentView = container
         self.panel = panel
@@ -62,74 +118,73 @@ final class SuggestionOverlay {
 
     // MARK: Inline ghost text (native apps with caret bounds)
 
-    /// Show `text` as dimmed ghost text just right of the caret. `caretRect` is in
-    /// Quartz/AX global coordinates (top-left origin). `color`, when provided (from the
-    /// screenshot appearance probe), makes the ghost blend with the field's real text.
+    /// Where a line of `font` text puts its baseline inside a caret line box
+    /// (top-left global): the glyph box centred in the line box. Matches CSS
+    /// half-leading in web views and is within a point for native text views.
+    nonisolated static func defaultBaseline(caret: CGRect, font: NSFont) -> CGFloat {
+        let glyphBox = font.ascender + abs(font.descender)
+        return caret.minY + (caret.height - glyphBox) / 2 + font.ascender
+    }
+
+    /// Show `text` as ghost text continuing from the caret. `caretRect` is AX
+    /// top-left global; `baseline` (same space) pins the text's baseline, else it's
+    /// derived from the caret box. `color` is the field's text colour when known —
+    /// the ghost is that colour at `opacity`.
     ///
-    /// Vertically CENTERS the label in the caret rect. For native fields the caret box
-    /// hugs the glyphs, so centering ≈ baseline alignment; for web/Electron fields the
-    /// caret box is an inflated CSS line box whose real text sits centered — bottom-
-    /// aligning into it (the old behavior) pushed the ghost visibly too low.
-    /// Returns false when there isn't room for even a couple of characters between
-    /// the caret and the right limit — the caller should fall back to the HUD pill.
-    ///
-    /// When `fieldRect` (the focused text input's frame, AX top-left global) is
-    /// provided and sane, the ghost WRAPS like real text: line 1 starts at the caret
-    /// (via firstLineHeadIndent), wrapped lines start at the box's left edge, and
-    /// nothing draws below the box's bottom.
+    /// With a sane `fieldRect` the ghost WRAPS like real text: line 1 from the
+    /// caret, wrapped lines from `leftX` (the paragraph's left edge), never below
+    /// the field. Returns false when there's no room for a couple of characters —
+    /// the caller falls back to the HUD pill.
     @discardableResult
     func showInline(text: String, at caretRect: CGRect, font: NSFont, opacity: Double,
                     color: NSColor? = nil, maxRightX: CGFloat? = nil,
-                    fieldRect: CGRect? = nil) -> Bool {
+                    fieldRect: CGRect? = nil, leftX: CGFloat? = nil,
+                    baseline: CGFloat? = nil) -> Bool {
         guard let panel, !text.isEmpty else { hide(); return true }
         background.isHidden = true
+        label.isHidden = true
         // A previous mirror presentation's opaque backdrop and fake caret must not
         // linger under a plain inline ghost.
         mirrorBackdrop.isHidden = true
         caretBar.isHidden = true
 
         let ghostColor = (color ?? NSColor.secondaryLabelColor).withAlphaComponent(opacity)
-        let padding: CGFloat = 1   // tight against the typed word, like the real text
+        let baselineY = baseline ?? Self.defaultBaseline(caret: caretRect, font: font)
+        let caretX = caretRect.maxX + 1   // tight against the typed word, like real text
 
+        let originX: CGFloat
+        let width: CGFloat
+        let indent: CGFloat
+        let maxLines: Int
         if let field = fieldRect, Self.isSaneFieldRect(field, caretRect: caretRect) {
-            return showWrapped(text: text, caretRect: caretRect, fieldRect: field,
-                               font: font, color: ghostColor, maxRightX: maxRightX,
-                               padding: padding, panel: panel)
+            let left = min(leftX ?? field.minX + 4, caretX)
+            let rightInset = max(4, left - field.minX)
+            var right = field.maxX - rightInset
+            if let maxRightX { right = min(right, maxRightX) }
+            width = min(right - left, 900)
+            indent = caretX - left
+            guard width - indent >= 30 else { hide(); return false }
+            let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+            let linesBelow = max(1, Int((field.maxY - caretRect.minY) / lineHeight))
+            maxLines = min(3, linesBelow)
+            originX = left
+        } else {
+            let natural = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
+            let available = (maxRightX ?? .greatestFiniteMagnitude) - caretX
+            guard available >= 30 else { hide(); return false }
+            width = min(natural, available)
+            indent = 0
+            maxLines = 1
+            originX = caretX
         }
 
-        // Legacy single-line path (no reliable field rect).
-        label.maximumNumberOfLines = 1
-        label.lineBreakMode = .byTruncatingTail
-        label.stringValue = text
-        label.font = font
-        // Apply the user's ghost-opacity setting uniformly — whether the color came
-        // from the screenshot probe or the neutral-gray fallback — so the Settings
-        // slider always has a consistent, visible effect.
-        label.textColor = ghostColor
-        label.sizeToFit()
-        var size = label.intrinsicContentSize
-
-        // Clamp to the window's right edge: a long suggestion must truncate with an
-        // ellipsis (lineBreakMode is .byTruncatingTail) instead of overflowing the
-        // field. Real text would wrap; ghost text can't, so it truncates.
-        if let maxRightX {
-            let available = maxRightX - (caretRect.maxX + padding)
-            if available < 30 { hide(); return false }
-            if available < size.width { size.width = available }
-        }
-
-        // The panel is sized exactly to the label; no extra vertical stretch.
-        let panelHeight = size.height
-        label.frame = CGRect(x: 0, y: 0, width: size.width, height: panelHeight)
-
-        let verticalNudge = caretRect.height > 0
-            ? (caretRect.height - panelHeight) / 2
-            : 0
-
-        let flippedY = NSScreen.primaryHeight - (caretRect.minY + verticalNudge + panelHeight)
-        let origin = CGPoint(x: caretRect.maxX + padding, y: flippedY)
-        panel.setFrame(CGRect(origin: origin,
-                              size: CGSize(width: size.width + padding, height: panelHeight)),
+        let laid = ghost.configure(text: text, font: font, color: ghostColor, width: width,
+                                   firstLineIndent: indent, maxLines: maxLines)
+        ghost.frame = CGRect(x: 0, y: 0, width: width, height: laid.height)
+        ghost.isHidden = false
+        let top = baselineY - laid.firstBaseline
+        let flippedY = NSScreen.primaryHeight - (top + laid.height)
+        panel.setFrame(CGRect(x: originX, y: flippedY, width: width, height: laid.height),
                        display: true)
         panel.orderFrontRegardless()
         return true
@@ -145,51 +200,6 @@ final class SuggestionOverlay {
         return field.insetBy(dx: -8, dy: -8).contains(CGPoint(x: caretRect.midX, y: caretRect.midY))
     }
 
-    /// Cotypist-style wrapping ghost. Line 1 flows from the caret; wrapped lines
-    /// start at the field's left edge; lines are capped so nothing draws below the
-    /// field's bottom, with tail truncation on the last visible line.
-    private func showWrapped(text: String, caretRect: CGRect, fieldRect: CGRect,
-                             font: NSFont, color: NSColor, maxRightX: CGFloat?,
-                             padding: CGFloat, panel: NSPanel) -> Bool {
-        let inset: CGFloat = 4
-        var wrapWidth = min(fieldRect.width - inset * 2, 700)
-        if let maxRightX { wrapWidth = min(wrapWidth, maxRightX - (fieldRect.minX + inset)) }
-        let firstLineIndent = max(0, caretRect.maxX + padding - (fieldRect.minX + inset))
-        // Not enough room for even a couple of characters on the caret's line.
-        guard wrapWidth - firstLineIndent >= 30 else { hide(); return false }
-
-        let lineHeight = max(caretRect.height, font.ascender + abs(font.descender) + font.leading)
-        let linesBelow = max(1, Int((fieldRect.maxY - caretRect.minY) / lineHeight))
-        let maxLines = min(3, linesBelow)
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.firstLineHeadIndent = firstLineIndent
-        paragraph.minimumLineHeight = lineHeight
-        paragraph.maximumLineHeight = lineHeight
-        let attributed = NSAttributedString(string: text, attributes: [
-            .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
-        ])
-
-        label.maximumNumberOfLines = maxLines
-        label.lineBreakMode = .byTruncatingTail   // applies to the final visible line
-        label.attributedStringValue = attributed
-        label.preferredMaxLayoutWidth = wrapWidth
-        var height = label.sizeThatFits(NSSize(width: wrapWidth, height: .greatestFiniteMagnitude)).height
-        height = min(height, CGFloat(maxLines) * lineHeight)
-        label.frame = CGRect(x: 0, y: 0, width: wrapWidth, height: height)
-
-        // Vertically center line 1 on the caret's line box (same nudge as the
-        // single-line path), extending downward for wrapped lines.
-        let verticalNudge = (caretRect.height - lineHeight) / 2
-        let flippedY = NSScreen.primaryHeight - (caretRect.minY + verticalNudge + height)
-        let origin = CGPoint(x: fieldRect.minX + inset, y: flippedY)
-        panel.setFrame(CGRect(origin: origin, size: CGSize(width: wrapWidth, height: height)),
-                       display: true)
-        panel.orderFrontRegardless()
-        return true
-    }
-
     // MARK: HUD pill (Electron / Catalyst fallback)
 
     /// Show `text` as a floating pill with a Tab hint, anchored near the bottom of
@@ -197,6 +207,8 @@ final class SuggestionOverlay {
     func showHUD(text: String, windowRect: CGRect?) {
         guard let panel, !text.isEmpty else { hide(); return }
         background.isHidden = false
+        label.isHidden = false
+        ghost.isHidden = true
 
         label.stringValue = "\(text)   ⇥ Tab"
         label.font = .systemFont(ofSize: 13, weight: .medium)
@@ -234,6 +246,8 @@ final class SuggestionOverlay {
     func showBubble(text: String, above caretRect: CGRect) {
         guard let panel, !text.isEmpty else { hide(); return }
         background.isHidden = false
+        label.isHidden = false
+        ghost.isHidden = true
 
         label.maximumNumberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
@@ -274,6 +288,8 @@ final class SuggestionOverlay {
                     maxRightX: CGFloat?) {
         guard let panel, !suggestion.isEmpty else { hide(); return }
         background.isHidden = true
+        label.isHidden = false
+        ghost.isHidden = true
 
         let ghostColor = textColor.withAlphaComponent(ghostOpacity)
 
