@@ -323,12 +323,56 @@ enum AccessibilityBridge {
     /// zero-length rect if it's close to that anchor's trailing edge; otherwise we
     /// prefer the anchor itself. This is what fixed the "wide gap" ghost-text bug.
     static func caretRect(of element: AXUIElement) -> CGRect? {
+        let field = elementFrame(of: element)
+        // Hidden-input editors (Monaco, CodeMirror 5…) type into a tiny textarea
+        // they keep AT the caret: its frame is the caret. A reported caret is
+        // trusted only when it agrees with that frame (±2pt).
+        if let field, field.width < 4 || field.height < 4 {
+            if let raw = rawCaretRect(of: element), hiddenInputAgrees(raw, field) { return raw }
+            return hiddenInputCaret(field)
+        }
         guard let raw = rawCaretRect(of: element) else { return nil }
-        guard let field = elementFrame(of: element) else { return raw }
+        guard let field else { return raw }
         // A caret outside its own field (expanded by 20pt) is stale geometry.
         // (A zero-width caret is an "empty" rect to `intersects`, so test its centre.)
         guard field.insetBy(dx: -20, dy: -20).contains(CGPoint(x: raw.midX, y: raw.midY)) else { return nil }
         return snappedToSingleLineField(raw, field: field)
+    }
+
+    /// A hidden input's frame read as a caret: usable when it is line-tall.
+    static func hiddenInputCaret(_ field: CGRect) -> CGRect? {
+        guard field.height >= 8, field.height <= 80 else { return nil }
+        return CGRect(x: field.minX, y: field.minY, width: 1, height: field.height)
+    }
+
+    static func hiddenInputAgrees(_ caret: CGRect, _ field: CGRect) -> Bool {
+        (abs(caret.maxX - field.minX) <= 2 || abs(caret.maxX - field.maxX) <= 2)
+            && abs(caret.midY - field.midY) <= max(caret.height, field.height)
+    }
+
+    /// Left edge of the VISUAL line the caret is on (soft wraps included): the x
+    /// of its first character, found by binary search back from the caret for
+    /// the first character on the same line (Cotypist's current-line finder).
+    static func visualLineStartX(of element: AXUIElement, caret: Int) -> CGFloat? {
+        guard caret > 0, let ref = boundsForRange(element, location: caret - 1, length: 1),
+              ref.height > 2 else { return nil }
+        // Never past the start of the paragraph.
+        var low = 0
+        if let value = stringValue(of: element) {
+            let utf16 = Array(value.utf16.prefix(caret))
+            if let newline = utf16.lastIndex(of: 0x0A) { low = newline + 1 }
+        }
+        var high = caret - 1   // known on the line
+        while low < high {
+            let mid = (low + high) / 2
+            if let r = boundsForRange(element, location: mid, length: 1), r.height > 2, sameLine(r, ref) {
+                high = mid
+            } else {
+                low = mid + 1
+            }
+        }
+        guard let first = boundsForRange(element, location: high, length: 1), first.height > 2 else { return nil }
+        return first.minX
     }
 
     /// Single-line fields: when the field is shorter than two caret lines and the

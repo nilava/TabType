@@ -1315,8 +1315,11 @@ final class Engine {
     }
 
     /// Cotypist's minimum field size for suggestions.
+    /// A hidden-input editor's caret-sized textarea doesn't say how big the
+    /// editor is, so it passes.
     nonisolated static func fieldIsLargeEnough(_ frame: CGRect) -> Bool {
-        frame.width * frame.height >= 6400 && (frame.height >= 32 || frame.width >= 300)
+        if frame.width < 4 || frame.height < 4 { return true }
+        return frame.width * frame.height >= 6400 && (frame.height >= 32 || frame.width >= 300)
     }
 
     /// What's left of `suggestion` (made for `requested`) once the field holds
@@ -1512,7 +1515,8 @@ final class Engine {
             let caretAtEnd = element.map(AccessibilityBridge.caretConfirmedAtEnd) == true
             let fieldRect = (allowWrap && caretAtEnd) ? elementFrame : nil
             let leftX = fieldRect == nil ? nil
-                : element.flatMap { AccessibilityBridge.paragraphLeftX(of: $0, caret: caret) }
+                : element.flatMap { AccessibilityBridge.visualLineStartX(of: $0, caret: caret)
+                    ?? AccessibilityBridge.paragraphLeftX(of: $0, caret: caret) }
             // Clamp the ghost to the text INPUT BOX's right edge, not just the
             // window's — composers are narrower than their windows.
             let boxRight: CGFloat? = {

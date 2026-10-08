@@ -118,5 +118,20 @@ final class FieldSizeGateTests: XCTestCase {
         XCTAssertTrue(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 200, height: 40)))   // small text area
         XCTAssertFalse(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 220, height: 22)))  // search box
         XCTAssertFalse(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 60, height: 60)))   // tiny
+        XCTAssertTrue(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 1, height: 18)))     // hidden input
+    }
+}
+
+final class HiddenInputTests: XCTestCase {
+    func testHiddenTextareaFrameIsTheCaret() {
+        let field = CGRect(x: 412, y: 300, width: 1, height: 18)
+        XCTAssertEqual(AccessibilityBridge.hiddenInputCaret(field), CGRect(x: 412, y: 300, width: 1, height: 18))
+        XCTAssertNil(AccessibilityBridge.hiddenInputCaret(CGRect(x: 70, y: 1080, width: 1, height: 1)))
+    }
+
+    func testReportedCaretMustAgreeWithTheHiddenInput() {
+        let field = CGRect(x: 412, y: 300, width: 1, height: 18)
+        XCTAssertTrue(AccessibilityBridge.hiddenInputAgrees(CGRect(x: 411, y: 300, width: 1, height: 18), field))
+        XCTAssertFalse(AccessibilityBridge.hiddenInputAgrees(CGRect(x: 80, y: 300, width: 1, height: 18), field))
     }
 }
