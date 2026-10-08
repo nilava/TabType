@@ -197,15 +197,28 @@ struct ModelSettingsView: View {
         Form {
             Section("Engine") {
                 Picker("Suggestions from", selection: $settings.engineChoice) {
-                    Text("Local model (recommended)").tag(EngineChoice.local)
+                    Text("Local model (recommended)").tag(EngineChoice.llama)
+                    Text("Local model — classic MLX engine").tag(EngineChoice.local)
                     Text("Apple Intelligence").tag(EngineChoice.appleIntelligence)
                     Text("Automatic").tag(EngineChoice.auto)
                 }
                 .pickerStyle(.radioGroup)
-                Label("The local model runs entirely on this Mac and never needs a network connection. Apple Intelligence is available as an alternative if you prefer it.",
+                Label("The local model runs entirely on this Mac and never needs a network connection. It shows a suggestion only when it's confident, and completes half-typed words. The classic MLX engine is kept for comparison.",
                       systemImage: "cpu")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            if settings.engineChoice != .local {
+                LlamaModelSections()
+            } else {
+                classicModelSections
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder private var classicModelSections: some View {
+        Group {
 
             Section("Local model") {
                 HStack {
@@ -268,7 +281,6 @@ struct ModelSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     @ViewBuilder private var statusIcon: some View {

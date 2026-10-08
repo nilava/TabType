@@ -25,6 +25,26 @@ public struct ModelCatalog: Codable, Sendable, Equatable {
         public var showThreshold: Double?
         public var extensionThreshold: Double?
 
+        public init(id: String, name: String, summary: String, template: String, url: URL, fileName: String,
+                    sizeBytes: Int64, sha256: String?, license: String, licenseURL: URL?,
+                    requiresTermsNotice: Bool, minimumRAMGB: Int, showThreshold: Double?,
+                    extensionThreshold: Double?) {
+            self.id = id
+            self.name = name
+            self.summary = summary
+            self.template = template
+            self.url = url
+            self.fileName = fileName
+            self.sizeBytes = sizeBytes
+            self.sha256 = sha256
+            self.license = license
+            self.licenseURL = licenseURL
+            self.requiresTermsNotice = requiresTermsNotice
+            self.minimumRAMGB = minimumRAMGB
+            self.showThreshold = showThreshold
+            self.extensionThreshold = extensionThreshold
+        }
+
         public var modelTemplate: ModelTemplate { ModelTemplate.named(template) ?? .base }
 
         public func decoderOptions() -> DecoderOptions {
@@ -39,12 +59,23 @@ public struct ModelCatalog: Codable, Sendable, Equatable {
     public struct Recommendation: Codable, Sendable, Equatable {
         public var minimumRAMGB: Int
         public var modelID: String
+
+        public init(minimumRAMGB: Int, modelID: String) {
+            self.minimumRAMGB = minimumRAMGB
+            self.modelID = modelID
+        }
     }
 
     public var version: Int
     public var models: [Entry]
     /// Highest matching tier wins.
     public var recommendations: [Recommendation]
+
+    public init(version: Int, models: [Entry], recommendations: [Recommendation]) {
+        self.version = version
+        self.models = models
+        self.recommendations = recommendations
+    }
 
     public func entry(id: String) -> Entry? { models.first { $0.id == id } }
 

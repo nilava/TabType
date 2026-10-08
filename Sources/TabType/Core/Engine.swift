@@ -337,7 +337,7 @@ final class Engine {
             let persona = policy.customInstructions.isEmpty
                 ? self.settings.personaPreface
                 : self.settings.personaPreface + " " + policy.customInstructions
-            let req = CompletionRequest(
+            var req = CompletionRequest(
                 beforeCursor: "Hello", afterCursor: "",
                 screenContext: screen,
                 clipboard: self.settings.useClipboardContext ? self.freshClipboardText() : "",
@@ -348,6 +348,9 @@ final class Engine {
                 speculative: true,
                 screenContextBudget: screenCap,
                 maxWords: 1, maxTokens: 1, temperature: 0.0)
+            req.screenIsConversation = policy.transcriptViaAX
+            self.applyWriterContext(&req, appName: NSWorkspace.shared.frontmostApplication?.localizedName,
+                                    policy: policy)
             let start = Date()
             _ = await self.router.current.complete(req)
             Log.shared.debug("context prewarm (\(bid ?? "?")) finished in \(Int(Date().timeIntervalSince(start) * 1000))ms")
@@ -366,6 +369,11 @@ final class Engine {
            let first = suggestion.split(whereSeparator: { $0 == " " || $0 == "\n" }).first {
             initial.append(String(first))
         }
+        if let v2 = router.current as? LlamaEngine, let result = v2.lastResult {
+            // The decoder's runner-up first words, already scored against the context.
+            initial += result.alternatives.map { $0.text.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && !initial.contains($0) }
+        }
         initial += PhraseMemory.shared.alternatives(after: buffer, limit: 2)
         guard !initial.isEmpty || lastReq != nil else { return }
         alternatives.show(candidates: initial.isEmpty ? ["…"] : initial, caretRect: caretRect)
@@ -383,8 +391,10 @@ final class Engine {
                 }
             }
         }
-        // One higher-temperature regeneration for a genuinely different option.
-        if var req = lastReq {
+        // One higher-temperature regeneration for a genuinely different option
+        // (v1 only: the v2 decoder is deterministic and already supplied its
+        // scored alternatives above).
+        if var req = lastReq, !(router.current is LlamaEngine) {
             req.temperature = 0.7
             req.maxTokens = 8
             req.maxWords = 2
@@ -426,17 +436,31 @@ final class Engine {
         let personalExamples: [TypingHistoryStore.AcceptPair] =
             (settings.collectTypingHistory && TypingHistoryStore.shared.acceptCount >= 5)
             ? TypingHistoryStore.shared.recentAccepts(limit: 2) : []
-        let req = CompletionRequest(
+        var req = CompletionRequest(
             beforeCursor: "Hello", afterCursor: "", screenContext: "", clipboard: "",
             persona: settings.personaPreface, personalExamples: personalExamples,
             previousWriting: [], speculative: true,
             maxWords: 1, maxTokens: 1, temperature: 0.0)
+        applyWriterContext(&req, appName: nil, policy: AppPolicyStore.policy(forBundleId: nil))
         Task { [weak self] in
             guard let self else { return }
             let start = Date()
             _ = await self.router.current.complete(req)
             Log.shared.info("model warm-up finished in \(Int(Date().timeIntervalSince(start) * 1000))ms — static prompt prefix cached")
         }
+    }
+
+    /// Writer identity and instructions for the v2 prompt assembler, which frames
+    /// them itself instead of using v1's pre-rendered `persona`.
+    private func applyWriterContext(_ req: inout CompletionRequest, appName: String?, policy: AppPolicy) {
+        req.appName = appName ?? ""
+        req.authorName = settings.authorName.trimmingCharacters(in: .whitespaces)
+        let style = settings.writingStyle.trimmingCharacters(in: .whitespaces)
+        req.customInstructions = [style.isEmpty ? "" : "Writing style: \(style).",
+                                  settings.customInstructions, policy.customInstructions]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     /// Pause suggestions for `minutes`, or indefinitely if nil, until `resume()`.
@@ -710,6 +734,9 @@ final class Engine {
     /// phrases from the user's own history beat the model for names/sign-offs/jargon.
     private func maybeShowInstantWordCompletion(isDeletion: Bool) {
         guard !isDeletion, currentSuggestion == nil else { return }
+        // The v2 decoder completes partial words itself (token healing) within
+        // ~50-100ms; a dictionary ghost first would only flicker and disagree.
+        guard !(router.current is LlamaEngine) else { return }
         // Same credential gate as the model path — the dictionary layer was
         // happily completing "co" → "company" inside email fields.
         if let f = AccessibilityBridge.focusedElement(),
@@ -1282,7 +1309,7 @@ final class Engine {
             ? TypingHistoryStore.shared.contextSamples(budget: 350) : []
         // The user's last few sent messages in THIS app — conversational thread.
         let recentMessages = bundleId.flatMap { recentInputs[$0] } ?? []
-        let req = CompletionRequest(
+        var req = CompletionRequest(
             beforeCursor: ctx.input,
             afterCursor: ctx.afterCursor,
             screenContext: screenContext,
@@ -1301,9 +1328,10 @@ final class Engine {
                 ? min(settings.maxWords, 3) : settings.maxWords,
             maxTokens: settings.maxTokens,
             temperature: settings.temperature)
+        applyWriterContext(&req, appName: frontApp, policy: policy)
         if !speculative { lastReq = req }   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
-        if settings.verboseLog {
+        if settings.verboseLog, !(engine is LlamaEngine) {
             let fullPrompt = PromptBuilder.body(req, cap: PromptBuilder.defaultCap)
             Log.shared.debug("predict full prompt:\n---\n\(fullPrompt)\n---")
         }
@@ -1328,7 +1356,8 @@ final class Engine {
             Statistics.shared.record(.requested)
             let raw = await engine.complete(req)
             await self.handlePredictionResult(
-                raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt)
+                raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt,
+                exact: engine is LlamaEngine)
         }
     }
 
@@ -1352,8 +1381,11 @@ final class Engine {
     /// word-boundary reconciliation, the mid-word plausibility guard, and finally
     /// showing the suggestion. Used both for the direct `runPrediction()` path and for
     /// a coalesced request that completes later (`handleLateSuggestion`).
+    /// - Parameter exact: the engine returned exact insertion text (v2: partial word
+    ///   healed, spacing resolved) — skip v1's echo/assistant-speak/boundary repair.
     private func handlePredictionResult(raw: String?, req: CompletionRequest, ctxInput: String,
-                                        policy: AppPolicy, startedAt: DispatchTime) async {
+                                        policy: AppPolicy, startedAt: DispatchTime,
+                                        exact: Bool = false) async {
         let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1_000_000
         if settings.verboseLog {
             Log.shared.debug("predict raw model output (pre-post-processing): \(raw.map { "\"\($0)\"" } ?? "nil")")
@@ -1365,20 +1397,23 @@ final class Engine {
             Log.shared.debug("predict -> (no suggestion) (\(elapsedMs)ms)")
             return
         }
-        // Drop echoes (the model repeating what was just typed), then reject
-        // assistant-speak/reply-drift, then reconcile the word boundary so
-        // accepting never merges into the prefix.
-        guard let deEchoed = Engine.stripEcho(raw, prefix: ctxInput) else {
-            Log.shared.debug("predict -> (echo rejected) (\(elapsedMs)ms)")
-            Statistics.shared.record(.rejectedEcho)
-            return
+        var suggestion = raw
+        if !exact {
+            // Drop echoes (the model repeating what was just typed), then reject
+            // assistant-speak/reply-drift, then reconcile the word boundary so
+            // accepting never merges into the prefix.
+            guard let deEchoed = Engine.stripEcho(raw, prefix: ctxInput) else {
+                Log.shared.debug("predict -> (echo rejected) (\(elapsedMs)ms)")
+                Statistics.shared.record(.rejectedEcho)
+                return
+            }
+            guard let clean = Engine.stripAssistantSpeak(deEchoed, inputTail: String(ctxInput.suffix(10))) else {
+                Log.shared.debug("predict -> (assistant-speak rejected) (\(elapsedMs)ms)")
+                Statistics.shared.record(.rejectedAssistantSpeak)
+                return
+            }
+            suggestion = Engine.reconcile(clean, prefix: ctxInput)
         }
-        guard let clean = Engine.stripAssistantSpeak(deEchoed, inputTail: String(ctxInput.suffix(10))) else {
-            Log.shared.debug("predict -> (assistant-speak rejected) (\(elapsedMs)ms)")
-            Statistics.shared.record(.rejectedAssistantSpeak)
-            return
-        }
-        var suggestion = Engine.reconcile(clean, prefix: ctxInput)
         guard !suggestion.isEmpty else { return }
 
         // Don't duplicate what already follows the caret ("?" suggested when a "?"
@@ -1403,7 +1438,7 @@ final class Engine {
         // Letter/number boundary is ambiguous (same-word completion vs. new word) —
         // resolve it via the plausibility dictionary rather than always forcing a
         // space, which used to destroy correct mid-word completions like "the"+"n".
-        if let lastWord = ctxInput.last, lastWord.isLetter || lastWord.isNumber {
+        if !exact, let lastWord = ctxInput.last, lastWord.isLetter || lastWord.isNumber {
             guard let resolved = await reconcileMidWord(suggestion, prefix: ctxInput, req: req, elapsedMs: elapsedMs) else {
                 return
             }

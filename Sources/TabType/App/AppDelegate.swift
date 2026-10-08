@@ -7,6 +7,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private let settings = AppSettings.shared
     private let provider = ModelProvider.shared
+    private let llamaModels = LlamaModelManager.shared
     private lazy var engine = Engine(settings: settings, provider: provider)
 
     private var statusItem: NSStatusItem!
@@ -52,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             .sink { [weak self] _ in self?.applyMacOSPredictiveText() }
             .store(in: &cancellables)
 
-        Log.shared.info("TabType launched. model=\(settings.modelId) ax=\(AccessibilityBridge.isTrusted()) screen=\(ScreenContextProvider.shared.hasPermission()) emoji=\(EmojiMatcher.shared.all.count)")
+        Log.shared.info("TabType launched. engine=\(settings.engineChoice.rawValue) v2model=\(llamaModels.selectedID) v1model=\(settings.modelId) ax=\(AccessibilityBridge.isTrusted()) screen=\(ScreenContextProvider.shared.hasPermission()) emoji=\(EmojiMatcher.shared.all.count)")
 
         // Persist the model id only once it actually finishes loading, so a failed
         // switch to a different model never leaves settings pointing at a model that
@@ -64,8 +65,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self?.engine.warmUpModel()
         }
 
-        // Start loading the model + spell dictionary right away.
-        provider.load(modelId: settings.modelId)
+        // Start loading the selected engine's model + spell dictionary right away.
+        startSelectedEngine()
+        settings.$engineChoice
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                // @Published fires before the stored value changes — read it next tick.
+                DispatchQueue.main.async {
+                    self?.startSelectedEngine()
+                    self?.rebuildMenu()
+                }
+            }
+            .store(in: &cancellables)
+        llamaModels.$status
+            .receive(on: RunLoop.main)
+            .sink { [weak self] status in
+                self?.rebuildMenu()
+                // Cache the static prompt head as soon as a v2 model is ready.
+                if case .ready = status { self?.engine.warmUpModel() }
+            }
+            .store(in: &cancellables)
         if settings.autocorrectEnabled {
             SpellChecker.shared.loadIfNeeded(language: settings.autocorrectLanguage)
         }
@@ -87,6 +107,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             showOnboarding()
             waitForTrustThenStart()
         }
+    }
+
+    /// Load only what the chosen engine needs: the v2 model, or v1's MLX model.
+    private func startSelectedEngine() {
+        switch settings.engineChoice {
+        case .local:
+            if provider.readyModelId != settings.modelId { provider.load(modelId: settings.modelId) }
+        case .llama, .auto, .appleIntelligence:
+            if !llamaModels.isLoaded { llamaModels.start() }
+        }
+    }
+
+    /// The v2 model must be freed before exit: ggml aborts if Metal resources are
+    /// still alive when the process tears down.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            await llamaModels.shutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - Status bar
@@ -177,6 +217,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func engineIconName() -> String {
+        if settings.engineChoice != .local {
+            switch llamaModels.status {
+            case .ready: return "cpu"
+            case .downloading: return "arrow.down.circle"
+            case .loading: return "gearshape.2"
+            case .failed: return "exclamationmark.triangle"
+            case .noModel: return "circle.dashed"
+            }
+        }
         switch provider.state {
         case .ready: return settings.engineChoice == .local ? "cpu" : "sparkles"
         case .downloading: return "arrow.down.circle"
@@ -210,6 +259,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func statusLine() -> String {
+        if settings.engineChoice != .local {
+            let name = { (id: String) in self.llamaModels.entry(id: id)?.name ?? id }
+            switch llamaModels.status {
+            case .noModel: return "No model yet — choose one in Settings ▸ Engine"
+            case .downloading(let id, let f): return "Downloading \(name(id))… \(Int(f * 100))%"
+            case .loading(let id): return "Loading \(name(id))…"
+            case .ready(let id): return "Model: \(name(id))"
+            case .failed(_, let message): return message
+            }
+        }
         switch provider.state {
         case .idle: return "Starting…"
         case .downloading(let modelId, let p):
@@ -251,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func openSettings() {
         if settingsWindow == nil {
             let view = SettingsView().environmentObject(settings).environmentObject(provider)
+                .environmentObject(llamaModels)
             let hosting = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: hosting)
             window.title = "TabType Settings"

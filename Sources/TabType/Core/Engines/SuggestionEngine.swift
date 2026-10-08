@@ -39,6 +39,11 @@ struct CompletionRequest {
     /// Character budget for screen-memory context in the prompt (chat/messaging apps
     /// get a larger one so more transcript survives — see `AppPolicy.screenContextCap`).
     var screenContextBudget: Int = 700
+    /// Frontmost app name, author name and raw custom instructions — the v2 prompt
+    /// assembler frames these itself (v1 uses the pre-rendered `persona`).
+    var appName: String = ""
+    var authorName: String = ""
+    var customInstructions: String = ""
     /// Display cap on the suggestion.
     var maxWords: Int
     /// Generation cap.

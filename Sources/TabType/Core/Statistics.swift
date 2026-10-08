@@ -17,6 +17,7 @@ final class Statistics: ObservableObject {
         case coalescedBusy                // model busy — request deferred, retried automatically
         case superseded                   // finished, but newer input already replaced it
         case generatedEmpty               // model actually returned nothing usable
+        case belowConfidence              // v2: suggestion scored below the model's show threshold
         case rejectedEcho                 // repeated what the user already typed
         case rejectedAssistantSpeak       // read like an assistant reply, not a continuation
         case rejectedSuffixOverlap        // entirely duplicated text after the caret
@@ -35,6 +36,7 @@ final class Statistics: ObservableObject {
             case .coalescedBusy: return "Deferred (model busy)"
             case .superseded: return "Superseded by newer input"
             case .generatedEmpty: return "Empty model output"
+            case .belowConfidence: return "Held back (low confidence)"
             case .rejectedEcho: return "Rejected (echo)"
             case .rejectedAssistantSpeak: return "Rejected (assistant-speak)"
             case .rejectedSuffixOverlap: return "Rejected (after-cursor duplicate)"

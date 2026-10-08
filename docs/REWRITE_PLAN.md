@@ -289,6 +289,14 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [ ] Anchored pill fallback; per-app font scale / vertical offset / size thresholds
 - [ ] Manual test matrix: TextEdit, Notes, Mail, Messages, Slack, Claude desktop, Safari/Chrome (Gmail, Docs), VS Code, Terminal
 
+### Phase 6a — v2 engine in the app (pulled forward) ✅
+- [x] `LlamaEngine` plugs into the existing engine slot; v2 output bypasses v1's echo/assistant-speak/mid-word repair (exact insertion text); dictionary instant layer off for v2
+- [x] Request carries app name, author name and raw custom instructions for the prompt assembler; warm-up/prewarm become cache prefills
+- [x] `LlamaModelManager`: catalog refresh, selection, download with progress, load, delete, custom models, self-test on load
+- [x] Settings ▸ Engine: v2 as the default ("Local model"), classic MLX kept as an option; one-time migration from v1
+- [x] Only the selected engine's model loads; unload on quit (ggml exit rule); menu bar shows v2 status
+- [x] Word picker uses the decoder's scored alternatives
+
 ### Phase 6 — Session & interaction
 - [ ] `InputSession` state machine replacing `Engine.swift`
 - [ ] Accept word / accept all / type-through / remainder protection / Esc pause

@@ -196,7 +196,14 @@ final class AppSettings: ObservableObject {
         // Local model is the default (matches Cotypist's own architecture — it never
         // uses Apple Intelligence, confirmed by inspecting its installed binary).
         // Apple Intelligence remains available as an explicit alternate choice.
-        engineChoice = EngineChoice(rawValue: defaults.string(forKey: Keys.engineChoice) ?? "") ?? .local
+        // v2 (llama.cpp) is the default; people on the v1 local engine move over once.
+        var choice = EngineChoice(rawValue: defaults.string(forKey: Keys.engineChoice) ?? "") ?? .llama
+        if choice == .local, !defaults.bool(forKey: Keys.migratedToLlama) {
+            choice = .llama
+            defaults.set(choice.rawValue, forKey: Keys.engineChoice)
+        }
+        defaults.set(true, forKey: Keys.migratedToLlama)
+        engineChoice = choice
         // Default to the model recommended for this Mac's hardware until the user
         // explicitly picks one.
         modelId = defaults.string(forKey: Keys.modelId) ?? HardwareInfo.recommendedModelId
@@ -293,6 +300,7 @@ final class AppSettings: ObservableObject {
         static let acceptWholeLine = "acceptWholeLine"
         static let ghostOpacity = "ghostOpacity"
         static let engineChoice = "engineChoice"
+        static let migratedToLlama = "migratedToLlamaEngine"
         static let modelId = "modelId"
         static let temperature = "temperature"
         static let contextChars = "contextChars"
