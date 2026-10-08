@@ -40,6 +40,8 @@ struct AppPolicy {
     /// Suggestions appear in a floating mirror of the line (Cotypist's text
     /// mirroring) — for apps where inline ghost text can't be placed reliably.
     var textMirror: Bool = false
+    /// Suggest in fields of any size (normally small fields are skipped).
+    var ignoreSizeThresholds: Bool = false
     /// Font-size-from-caret-height ratio, used only when the field's real AX font
     /// can't be read (common for web/Electron content). Web/Electron caret rects are
     /// padded CSS line boxes, so a tight-line-box ratio (0.72) undersizes the ghost;
@@ -151,13 +153,15 @@ struct AppOverride: Codable, Equatable {
     var learnFromWriting: Bool?
     /// Show suggestions in a floating mirror of the line instead of inline.
     var textMirror: Bool?
+    /// Suggest even in small fields (search boxes etc.).
+    var ignoreSizeThresholds: Bool?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
             && disableTabKey == nil && !improveCompatibility && customInstructions.isEmpty
             && readConversation == nil && contextSize == nil
             && ghostFontScale == nil && ghostVerticalOffset == nil && learnFromWriting == nil
-            && textMirror == nil
+            && textMirror == nil && ignoreSizeThresholds == nil
     }
 }
 
@@ -288,6 +292,7 @@ enum AppPolicyStore {
             if let scale = o.ghostFontScale { policy.fontFactor *= scale }
             if let offset = o.ghostVerticalOffset { policy.verticalOffset += offset }
             if let mirror = o.textMirror { policy.textMirror = mirror }
+            if let ignore = o.ignoreSizeThresholds { policy.ignoreSizeThresholds = ignore }
             applyContextOverrides(o, to: &policy)
         }
         return policy

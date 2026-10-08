@@ -408,6 +408,11 @@ private struct AppOverrideDetail: View {
                     set: { override.textMirror = $0 ? true : nil }))
                 Text("If suggestions can't be shown in line with the cursor in this app, TabType previews them in a small floating mirror of the line you're typing.")
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle("Suggest in small fields too", isOn: Binding(
+                    get: { override.ignoreSizeThresholds ?? false },
+                    set: { override.ignoreSizeThresholds = $0 ? true : nil }))
+                Text("Normally TabType skips small fields like search boxes.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Improve compatibility with this app", isOn: $override.improveCompatibility)
                 Text("If completions don't appear reliably in this app, try turning this on — it switches to clipboard-paste insertion.")
                     .font(.caption).foregroundStyle(.secondary)

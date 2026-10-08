@@ -1200,6 +1200,14 @@ final class Engine {
             return
         }
 
+        // Small fields (search boxes, single-word inputs) get no suggestions,
+        // Cotypist's thresholds: ≥ 6400 pt² and at least 32pt tall or 300pt wide.
+        if !policy.ignoreSizeThresholds, let f = ctx.focused, let frame = AccessibilityBridge.elementFrame(of: f),
+           !Engine.fieldIsLargeEnough(frame) {
+            Log.shared.debug("predict skipped: field too small (\(Int(frame.width))×\(Int(frame.height)))")
+            return
+        }
+
         // Code editors: only sidebar chat inputs, never the main editor.
         guard allowedByChatPanelPolicy(policy, element: ctx.focused, bundleId: bundleId) else { return }
 
@@ -1304,6 +1312,11 @@ final class Engine {
         let lower = partial.lowercased()
         let earlier = context.lowercased().dropLast(partial.count)
         return !earlier.split(whereSeparator: { !$0.isLetter }).contains { $0.hasPrefix(lower) }
+    }
+
+    /// Cotypist's minimum field size for suggestions.
+    nonisolated static func fieldIsLargeEnough(_ frame: CGRect) -> Bool {
+        frame.width * frame.height >= 6400 && (frame.height >= 32 || frame.width >= 300)
     }
 
     /// What's left of `suggestion` (made for `requested`) once the field holds

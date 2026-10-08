@@ -111,3 +111,12 @@ final class SpliceTests: XCTestCase {
         XCTAssertNil(Engine.splice(" at", requested: "take a look", current: "take a look"))
     }
 }
+
+final class FieldSizeGateTests: XCTestCase {
+    func testChatComposersPassSearchBoxesDont() {
+        XCTAssertTrue(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 626, height: 20)))   // one-line composer
+        XCTAssertTrue(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 200, height: 40)))   // small text area
+        XCTAssertFalse(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 220, height: 22)))  // search box
+        XCTAssertFalse(Engine.fieldIsLargeEnough(CGRect(x: 0, y: 0, width: 60, height: 60)))   // tiny
+    }
+}
