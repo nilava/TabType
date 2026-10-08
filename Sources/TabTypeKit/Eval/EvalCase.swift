@@ -61,9 +61,12 @@ public struct CaseResult: Codable, Sendable, Equatable {
     public var truth: String
     public var score: CaseScore
     public var latencyMs: Double
+    /// The backend's confidence in its first word, when it reports one — lets
+    /// `tabtype-eval sweep` tune the show threshold from a single ungated run.
+    public var confidence: Double?
 
     public init(id: String, category: String, kind: SplitKind, suggestion: String,
-                truth: String, score: CaseScore, latencyMs: Double) {
+                truth: String, score: CaseScore, latencyMs: Double, confidence: Double? = nil) {
         self.id = id
         self.category = category
         self.kind = kind
@@ -71,6 +74,7 @@ public struct CaseResult: Codable, Sendable, Equatable {
         self.truth = truth
         self.score = score
         self.latencyMs = latencyMs
+        self.confidence = confidence
     }
 }
 

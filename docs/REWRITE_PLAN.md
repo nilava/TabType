@@ -246,21 +246,22 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Seed eval set (32 entries → 192 cases); v1 baseline recorded via app `--eval` mode (see `eval/README.md`)
 - [ ] Add a larger corpus: opt-in export of own writing + a public chat/email corpus
 
-### Phase 1 — Inference runtime
-- [ ] `LlamaRuntime` actor: load/unload, context params, Metal offload, cancellation by generation id
-- [ ] `VocabIndex`: piece text table, leading-space flags, control-token mask, prefix trie
-- [ ] Batched multi-sequence decode API (`seq_cp`, `seq_rm`, `seq_keep`)
-- [ ] `PromptCache`: LCP reuse, tail trim, front shift (non-SWA) / rebuild (SWA)
-- [ ] Warm-up of template head; idle unload; memory-pressure handling
-- [ ] Unit tests: tokenization round-trips, cache reuse correctness (logits equal with/without cache)
+### Phase 1 — Inference runtime ✅
+- [x] `LlamaRuntime` (`TokenModel`) + `InferenceEngine` actor on a dedicated serial queue: load/unload, Metal offload, cancellation by generation id (`GenerationGate`)
+- [x] `VocabIndex`: piece bytes, blocked/EOG masks, first-byte buckets for constraint lookups
+- [x] Batched multi-sequence decode on a unified KV cache (`fork`/`decode`/`drop`)
+- [x] Prompt cache: LCP reuse + tail trim; opt-in splice (shift) for window slides on non-SWA models — approximate by design, so never used for changed context
+- [x] Warm-up API, idle unload, memory-pressure unload (app wiring in Phase 6)
+- [x] Tests: fake-model decoder suite + real-model integration (round-trips, cache reuse = fresh, splice, healing) over `models/*.gguf`
 
-### Phase 2 — Decoder
-- [ ] `TokenHealing`: boundary split + per-step allowed-token masks (tests for SPM + BPE vocabularies)
-- [ ] Candidate expansion (top-k first tokens → parallel sequences)
-- [ ] Stop rules for short (word) and long (phrase) modes; trailing-space prediction
-- [ ] Scoring (total/avg logprob, duplicate merge) and confidence gate
-- [ ] Alternatives output for word picker; synonyms via masked re-decode
-- [ ] Tune thresholds per model on eval set; commit tuned defaults
+### Phase 2 — Decoder ✅
+- [x] `HealSplit` + constrained steps (verified on SentencePiece/Gemma and BPE/Qwen)
+- [x] Candidate expansion (top-k first tokens → parallel sequences, batched)
+- [x] Word stop rules, probability-gated phrase extension, trailing-space prediction
+- [x] Scoring (log-prob, duplicate merge) and confidence; `tabtype-eval sweep` for threshold tuning
+- [x] Alternatives output for the word picker
+- [ ] Synonyms via masked re-decode (moved to Phase 6 with the picker UI)
+- [x] Tuned defaults on seed-v1 (Gemma 4 E2B): extension 0.3, ≤4 words, show ≥0.2 — re-tune per model in Phase 3
 
 ### Phase 3 — Models & prompting
 - [ ] `ModelTemplate` for base, ChatML/Qwen3 (thinking off), Gemma, Llama 3, Phi

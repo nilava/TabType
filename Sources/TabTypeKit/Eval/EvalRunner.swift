@@ -8,6 +8,12 @@ public protocol CompletionBackend: AnyObject {
     var model: String { get }
     /// The text to insert at the caret, or nil/empty when nothing would be shown.
     func complete(_ evalCase: EvalCase) async throws -> String?
+    /// Confidence of the most recent `complete` result, if the backend scores one.
+    var lastConfidence: Double? { get }
+}
+
+extension CompletionBackend {
+    public var lastConfidence: Double? { nil }
 }
 
 public enum EvalRunner {
@@ -23,7 +29,7 @@ public enum EvalRunner {
             results.append(CaseResult(
                 id: c.id, category: c.category, kind: c.kind, suggestion: suggestion,
                 truth: c.truth, score: EvalScorer.score(suggestion: suggestion, truth: c.truth),
-                latencyMs: ms))
+                latencyMs: ms, confidence: backend.lastConfidence))
             progress?(i + 1, cases.count)
         }
         return EvalRun(backend: backend.name, model: backend.model,
@@ -37,6 +43,21 @@ public enum EvalRunner {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try encoder.encode(run).write(to: url)
+    }
+
+    /// Re-scores a run as if suggestions below each confidence threshold had not
+    /// been shown. Requires a run whose backend reported confidences.
+    public static func sweep(_ run: EvalRun, thresholds: [Double]) -> [(threshold: Double, summary: EvalSummary)] {
+        thresholds.map { t in
+            let gated = run.results.map { r -> CaseResult in
+                guard let c = r.confidence, c < t else { return r }
+                var hidden = r
+                hidden.suggestion = ""
+                hidden.score = EvalScorer.score(suggestion: "", truth: r.truth)
+                return hidden
+            }
+            return (t, EvalSummary(results: gated))
+        }
     }
 
     public static func load(_ url: URL) throws -> EvalRun {

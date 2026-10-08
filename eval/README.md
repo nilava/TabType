@@ -42,6 +42,28 @@ author actually typed, stopping at the first chunk that differs.
 | wrong-show rate | Cases where a wrong suggestion was shown (noise the user sees) |
 | latency p50/p95 | Wall time per suggestion |
 
+Tune the show threshold from one ungated decoder run:
+
+```bash
+.build/release/tabtype-eval run --model <file.gguf> --cases eval/cases/seed-v1.jsonl --out ungated.json
+.build/release/tabtype-eval sweep ungated.json
+```
+
+## Results (seed-v1, 192 cases)
+
+| | v1 MLX · Qwen3-4B-Instruct | v2 decoder · Gemma 4 E2B base | v2 decoder · Qwen3-0.6B base |
+|---|---|---|---|
+| accepted chars / case | 2.19 | **2.79** | 2.04 |
+| next-word recall | 37.0% | **48.4%** | 39.6% |
+| boundary recall | 32.8% | 39.1% | 23.4% |
+| mid-word recall | 45.3% | 67.2% | **71.9%** |
+| precision | 37.8% | **66.0%** | 58.0% |
+| wrong-show rate | 60.9% | **25.0%** | 28.6% |
+| latency p50 | 296 ms | 73 ms | **21 ms** |
+
+v2 numbers use the default decoder (4 candidates, extension 0.3, ≤4 words) and
+show threshold 0.2. Ungated, Gemma 4 E2B reaches 53.6% recall / 3.13 chars per case.
+
 ## Phase 0 baseline (seed-v1, 192 cases)
 
 | | v1 MLX · Qwen3-4B-Instruct 4-bit | llama.cpp greedy spike · Gemma 4 E2B base Q4_K_M |
