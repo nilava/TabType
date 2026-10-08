@@ -47,6 +47,13 @@ final class Engine {
     /// MID-BURST for a snapshot of the input, served instantly at the next pause
     /// when the typed text still matches (possibly having typed INTO it — LCP).
     private var parked: (input: String, suggestion: String)?
+    /// True while `currentSuggestion` is the un-accepted TAIL of a suggestion the
+    /// user is Tabbing through word-by-word. While held, no new prediction may
+    /// start, land, or overwrite the display — otherwise the recompute triggered
+    /// by the accepted word's own insertion steals the remainder mid-Tab.
+    /// Released when the remainder is exhausted, on any non-matching real
+    /// keystroke (via `clearSuggestion`), or on Escape/focus/app change.
+    private var protectingRemainder = false
     /// One-shot bypass of prediction gates (force-activate shortcut).
     private var forceNextPrediction = false
     /// Per-app temporary pauses (bundle id → resume time).
@@ -161,6 +168,8 @@ final class Engine {
             guard bundleId == AccessibilityBridge.frontmostBundleId() ?? "" else { return }
             // Only worth a regeneration when something is (about to be) on screen.
             guard self.currentSuggestion != nil || !self.buffer.isEmpty else { return }
+            // Never regenerate over a remainder being Tabbed through.
+            guard !(self.protectingRemainder && self.currentSuggestion != nil) else { return }
             self.lastFreshRekick = Date()
             self.lastPredictedPrompt = ""   // context changed — bypass the dedup skip
             self.forceNextPrediction = true
@@ -237,6 +246,14 @@ final class Engine {
                         let bid = AccessibilityBridge.frontmostBundleId()
                         if AppPolicyStore.policy(forBundleId: bid).laggyCaret {
                             self.commitRecentInput(bundleId: bid)
+                        }
+                        // The field emptied — any displayed ghost (including a
+                        // Tab-protected remainder) belongs to the SENT message.
+                        // The focus/caret checks below can't catch this in
+                        // Electron apps (caret offset reads nil on both sides).
+                        if self.currentSuggestion != nil {
+                            self.clearSuggestion()
+                            self.lastPredictedPrompt = ""
                         }
                     }
                     guard self.currentSuggestion != nil else { return }
@@ -693,6 +710,12 @@ final class Engine {
     /// phrases from the user's own history beat the model for names/sign-offs/jargon.
     private func maybeShowInstantWordCompletion(isDeletion: Bool) {
         guard !isDeletion, currentSuggestion == nil else { return }
+        // Same credential gate as the model path — the dictionary layer was
+        // happily completing "co" → "company" inside email fields.
+        if let f = AccessibilityBridge.focusedElement(),
+           AccessibilityBridge.isSecureField(f) || AccessibilityBridge.isCredentialField(f) {
+            return
+        }
 
         // Word boundary → the user's own recurring phrases, remembered verbatim.
         if settings.collectTypingHistory, let last = buffer.last, last == " " {
@@ -704,6 +727,12 @@ final class Engine {
         }
 
         guard let last = buffer.last, last.isLetter else { return }
+        // Mid-email ("…@lodhagroup.co" → "company") is never a wanted completion.
+        if let lastWord = buffer.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
+           let at = lastWord.firstIndex(of: "@"), at != lastWord.startIndex,
+           lastWord.index(after: at) != lastWord.endIndex {
+            return
+        }
         let partial = String(buffer.reversed().prefix { $0.isLetter }.reversed())
         guard partial.count >= 3 else { return }
         let token = scheduleToken
@@ -730,6 +759,13 @@ final class Engine {
     /// suggestion aborts it.
     private func presentWhenSettled(suggestion: String, isNewSuggestion: Bool,
                                     allowWrap: Bool = false, minSettle: TimeInterval? = nil) {
+        // A remainder being Tabbed through is protected — a NEW suggestion must
+        // never steal its display slot (re-presents of the remainder itself come
+        // through with isNewSuggestion: false).
+        if isNewSuggestion, protectingRemainder, currentSuggestion != nil {
+            Statistics.shared.record(.heldForRemainder)
+            return
+        }
         // Register immediately: any keystroke during the wait clears/replaces it
         // (clearSuggestion / type-through), aborting the scheduled presentation.
         currentSuggestion = suggestion
@@ -1037,9 +1073,15 @@ final class Engine {
         let lineTrimmed = currentLine.trimmingCharacters(in: .whitespaces)
         guard lineTrimmed.contains(where: { $0.isWhitespace }) || lineTrimmed.count >= 3 else { return false }
         if let last = input.last, "/@".contains(last) { return false }
-        if let lastWord = input.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
-           lastWord.contains("://") {
-            return false
+        if let lastWord = input.split(whereSeparator: { $0 == " " || $0 == "\n" }).last {
+            if lastWord.contains("://") { return false }
+            // Typing an email address (content-based backstop for credential
+            // fields the AX label check can't identify): "x@y" mid-word. A chat
+            // @mention has nothing before the "@" and stays allowed.
+            if let at = lastWord.firstIndex(of: "@"), at != lastWord.startIndex,
+               lastWord.index(after: at) != lastWord.endIndex {
+                return false
+            }
         }
         return true
     }
@@ -1066,6 +1108,21 @@ final class Engine {
         let host = AccessibilityBridge.frontmostURLHost()
         let policy = AppPolicyStore.policy(forBundleId: bundleId, host: host)
         guard policy.isEnabled else { return }
+
+        // The user is Tabbing through a suggestion word-by-word — the remainder
+        // on screen must not be recomputed out from under them. But if the field
+        // has emptied under the hold (message sent without a keystroke), the
+        // remainder belongs to the sent text — drop it and continue normally.
+        if protectingRemainder, currentSuggestion != nil {
+            let fieldText = AccessibilityBridge.focusedElement()
+                .flatMap { AccessibilityBridge.stringValue(of: $0) } ?? ""
+            if fieldText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                clearSuggestion()
+            } else {
+                Statistics.shared.record(.heldForRemainder)
+                return
+            }
+        }
 
         // Paused after Escape, or conserving battery (on-demand only).
         if let until = pausedUntil, Date() < until { return }
@@ -1120,7 +1177,13 @@ final class Engine {
             return
         }
 
-        guard ctx.hasInput, forceNextPrediction || Engine.shouldPredict(ctx.input) else { return }
+        guard ctx.hasInput, forceNextPrediction || Engine.shouldPredict(ctx.input) else {
+            // An empty field with a ghost still painted means the text left the
+            // field without a keystroke (send click, programmatic clear) — the
+            // suggestion belongs to text that no longer exists.
+            if !ctx.hasInput, currentSuggestion != nil { clearSuggestion() }
+            return
+        }
 
         // A truly empty line gives a small model nothing to anchor on, so it can
         // latch onto screen noise — but the old threshold (12 chars) blinded the
@@ -1153,6 +1216,12 @@ final class Engine {
         // Never autocomplete a password field.
         if policy.excludesSecureField, let f = ctx.focused, AccessibilityBridge.isSecureField(f) {
             Log.shared.debug("predict skipped: secure field in \(bundleId ?? "?")")
+            return
+        }
+        // …or the plain-text half of a login/payment form (email, username, OTP,
+        // card number): suggestions there are noise at best.
+        if let f = ctx.focused, AccessibilityBridge.isCredentialField(f) {
+            Log.shared.debug("predict skipped: credential field in \(bundleId ?? "?")")
             return
         }
 
@@ -1359,7 +1428,9 @@ final class Engine {
             Statistics.shared.record(.discardedStale)
             // Re-kick for the CURRENT input — without this, a burst whose requests
             // were all stale ends with the model idle and no suggestion ever shown.
-            schedulePrediction()
+            // Not while a remainder is being Tabbed through: the "changed" input
+            // is the accepted word itself.
+            if !(protectingRemainder && currentSuggestion != nil) { schedulePrediction() }
             return
         }
 
@@ -1378,6 +1449,11 @@ final class Engine {
     /// suggestion behind what's since been typed.
     private func handleLateSuggestion(raw: String, req: CompletionRequest) {
         if let until = pausedUntil, Date() < until { return }
+        // Never replace (or re-kick over) a remainder being Tabbed through.
+        if protectingRemainder, currentSuggestion != nil {
+            Statistics.shared.record(.heldForRemainder)
+            return
+        }
         let ctx = ContextReader.gather(
             fallbackBuffer: buffer, screenContext: req.screenContext, inputChars: settings.contextChars)
         // Speculative results skip the staleness check — they're parked, and being
@@ -1407,6 +1483,12 @@ final class Engine {
         // Re-present paths don't carry a policy — resolve the frontmost app's so
         // per-app presentation rules (bubble vs inline) always apply.
         let policy = policy ?? AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
+        // A remainder being Tabbed through owns the display slot (see
+        // presentWhenSettled — this is the direct-call backstop).
+        if isNewSuggestion, protectingRemainder, currentSuggestion != nil,
+           currentSuggestion != suggestion {
+            return
+        }
         currentSuggestion = suggestion
         if isNewSuggestion { Statistics.shared.recordShown() }
         if let caretRect = inlineCaret {
@@ -1636,6 +1718,16 @@ final class Engine {
 
         overlay.hide()
         currentSuggestion = remainder.isEmpty ? nil : remainder
+        protectingRemainder = !remainder.isEmpty
+        if protectingRemainder {
+            // Tear down the prediction machinery armed by earlier real keystrokes,
+            // or it fires on the just-inserted word and replaces the remainder:
+            // the host-publish poll (scheduleToken), the debounce, and any
+            // in-flight generation whose stale result would re-kick.
+            debounceWork?.cancel()
+            scheduleToken += 1
+            router.cancelInFlight()
+        }
         buffer += toInsert
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
             .insertionStrategy
@@ -1718,6 +1810,7 @@ final class Engine {
         debounceWork?.cancel()
         scheduleToken += 1   // invalidate any in-flight host-publish poll
         router.cancelInFlight()
+        protectingRemainder = false
         currentSuggestion = nil
         hostExpectedLen = nil
         alternatives.hide()

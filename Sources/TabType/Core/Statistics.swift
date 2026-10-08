@@ -23,6 +23,7 @@ final class Statistics: ObservableObject {
         case rejectedRepeatAccepted       // regenerated the just-accepted text
         case rejectedMidWordImplausible   // mid-word boundary had no plausible reading
         case discardedStale               // input changed while the model was generating
+        case heldForRemainder             // prediction held while Tabbing through a suggestion
         case occupiedFallback             // inline spot had pixels — shown as HUD pill instead
         case watchdogTimeout              // generation exceeded the watchdog window
         case cacheReset                   // KV prompt cache had to be rebuilt from scratch
@@ -40,6 +41,7 @@ final class Statistics: ObservableObject {
             case .rejectedRepeatAccepted: return "Rejected (repeat of accepted)"
             case .rejectedMidWordImplausible: return "Rejected (mid-word implausible)"
             case .discardedStale: return "Discarded (input changed)"
+            case .heldForRemainder: return "Prediction held (Tabbing through)"
             case .occupiedFallback: return "Inline blocked → shown as pill"
             case .watchdogTimeout: return "Watchdog timeouts"
             case .cacheReset: return "KV cache rebuilds"

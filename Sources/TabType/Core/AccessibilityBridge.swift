@@ -78,6 +78,43 @@ enum AccessibilityBridge {
         return (subroleRef as? String) == "AXSecureTextField"
     }
 
+    /// Keywords that mark a field as credential-adjacent. Matched case-insensitively
+    /// against the field's placeholder, title, description, and label. Kept to
+    /// unambiguous identity/auth terms — "name" or "address" alone are far too
+    /// common in ordinary forms.
+    private static let credentialFieldKeywords: [String] = [
+        "email", "e-mail", "username", "user name", "user id", "userid",
+        "login", "log in", "sign in", "signin", "account number", "iban",
+        "phone", "mobile number", "otp", "one-time", "one time code",
+        "verification code", "security code", "2fa", "passcode", "pin",
+        "card number", "cvv", "cvc", "ssn", "social security", "passport",
+    ]
+
+    /// Whether the focused element looks like a credential/identity input (email,
+    /// username, OTP, card number…). Secure fields are caught by `isSecureField`;
+    /// this covers the plain-text half of login and payment forms, where
+    /// autocompleting is at best noise and at worst leaks context. Reads only the
+    /// element's own descriptive attributes — a handful of bounded AX round-trips.
+    static func isCredentialField(_ element: AXUIElement) -> Bool {
+        var labels: [String] = []
+        for attr in [kAXPlaceholderValueAttribute, kAXTitleAttribute,
+                     kAXDescriptionAttribute, kAXRoleDescriptionAttribute] {
+            var ref: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, attr as CFString, &ref)
+            if let s = ref as? String, !s.isEmpty { labels.append(s) }
+        }
+        // A visible label element associated with the field ("Email address").
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXTitleUIElementAttribute as CFString, &titleRef)
+        if let titleRef, CFGetTypeID(titleRef) == AXUIElementGetTypeID(),
+           let s = stringValue(of: titleRef as! AXUIElement), !s.isEmpty {
+            labels.append(s)
+        }
+        guard !labels.isEmpty else { return false }
+        let haystack = labels.joined(separator: " ").lowercased()
+        return credentialFieldKeywords.contains { haystack.contains($0) }
+    }
+
     /// The full string value of a text element.
     static func stringValue(of element: AXUIElement) -> String? {
         var value: CFTypeRef?

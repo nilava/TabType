@@ -173,4 +173,18 @@ final class TrimmerAndTypoTests: XCTestCase {
     func testTopCompletionShortPrefixRejected() {
         XCTAssertNil(makeSym().topCompletion(prefix: "un"))
     }
+
+    // MARK: - shouldPredict email gate
+
+    func testEmailInProgressBlocksPrediction() {
+        XCTAssertFalse(Engine.shouldPredict("my email is nilava.chowdhury@lodhagroup"))
+        XCTAssertFalse(Engine.shouldPredict("contact me at someone@exa"))
+    }
+
+    func testMentionAndPlainTextStillPredict() {
+        // A chat @mention has nothing before the "@" — allowed.
+        XCTAssertTrue(Engine.shouldPredict("hey ping @nilava about"))
+        // The email is a FINISHED earlier word — later prose predicts normally.
+        XCTAssertTrue(Engine.shouldPredict("email me at x@y.com and then we"))
+    }
 }
