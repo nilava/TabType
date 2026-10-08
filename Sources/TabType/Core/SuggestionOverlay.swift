@@ -141,6 +141,9 @@ final class SuggestionOverlay {
                     fieldRect: CGRect? = nil, leftX: CGFloat? = nil,
                     baseline: CGFloat? = nil) -> Bool {
         guard let panel, !text.isEmpty else { hide(); return true }
+        lastInline = InlinePlacement(caretRect: caretRect, font: font, opacity: opacity, color: color,
+                                     maxRightX: maxRightX, fieldRect: fieldRect, leftX: leftX,
+                                     baseline: baseline)
         background.isHidden = true
         label.isHidden = true
         // A previous mirror presentation's opaque backdrop and fake caret must not
@@ -188,6 +191,37 @@ final class SuggestionOverlay {
                        display: true)
         panel.orderFrontRegardless()
         return true
+    }
+
+    /// Everything the last inline ghost was placed with.
+    private struct InlinePlacement {
+        var caretRect: CGRect
+        var font: NSFont
+        var opacity: Double
+        var color: NSColor?
+        var maxRightX: CGFloat?
+        var fieldRect: CGRect?
+        var leftX: CGFloat?
+        var baseline: CGFloat?
+    }
+    private var lastInline: InlinePlacement?
+
+    /// The user typed (or we inserted) `typed`, the head of the ghost: show
+    /// `remainder` where real text now ends — the caret moved by `typed`'s width in
+    /// the ghost's own font, which is the field's. Instant; no AX round trip.
+    /// False when there's no inline ghost to move or it would leave its line.
+    @discardableResult
+    func advance(typed: String, remainder: String) -> Bool {
+        guard isVisible, ghost.isHidden == false, var placed = lastInline, !remainder.isEmpty,
+              !typed.contains("\n") else { return false }
+        let width = (typed as NSString).size(withAttributes: [.font: placed.font]).width
+        placed.caretRect = placed.caretRect.offsetBy(dx: width, dy: 0)
+        if let right = placed.maxRightX ?? placed.fieldRect?.maxX, placed.caretRect.maxX + 30 > right {
+            return false   // the typed text wrapped — let the settled caret decide
+        }
+        return showInline(text: remainder, at: placed.caretRect, font: placed.font, opacity: placed.opacity,
+                          color: placed.color, maxRightX: placed.maxRightX, fieldRect: placed.fieldRect,
+                          leftX: placed.leftX, baseline: placed.baseline)
     }
 
     /// A field rect is usable for wrapping only when it plausibly IS the input box
@@ -343,6 +377,7 @@ final class SuggestionOverlay {
     }
 
     func hide() {
+        lastInline = nil
         panel?.orderOut(nil)
         label.stringValue = ""
         mirrorBackdrop.isHidden = true

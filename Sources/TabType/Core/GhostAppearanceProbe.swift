@@ -105,9 +105,14 @@ final class GhostAppearanceProbe: ObservableObject {
         func lum(_ o: Int) -> Double {
             0.299 * Double(ptr[o]) / 255 + 0.587 * Double(ptr[o + 1]) / 255 + 0.114 * Double(ptr[o + 2]) / 255
         }
+        /// Transparent (a hole where one of our own windows sat): no content.
+        func hole(_ o: Int) -> Bool {
+            bpp >= 4 && ptr[o] == 0 && ptr[o + 1] == 0 && ptr[o + 2] == 0 && ptr[o + 3] == 0
+        }
         for y in stride(from: 0, to: image.height, by: max(1, image.height / 24)) {
             for x in stride(from: 0, to: image.width, by: stepX) {
                 let o = y * bpr + x * bpp
+                if hole(o) { continue }
                 let r = Double(ptr[o]) / 255, g = Double(ptr[o + 1]) / 255, b = Double(ptr[o + 2]) / 255
                 counts[(UInt32(r * 7) << 6) | (UInt32(g * 7) << 3) | UInt32(b * 7), default: 0] += 1
             }
@@ -119,7 +124,8 @@ final class GhostAppearanceProbe: ObservableObject {
         // Per-row ink density (count of contrasting sampled pixels).
         var density = [Int](repeating: 0, count: image.height)
         for y in 0..<image.height {
-            for x in stride(from: 0, to: image.width, by: stepX) where abs(lum(y * bpr + x * bpp) - bgLum) > 0.18 {
+            for x in stride(from: 0, to: image.width, by: stepX)
+            where !hole(y * bpr + x * bpp) && abs(lum(y * bpr + x * bpp) - bgLum) > 0.18 {
                 density[y] += 1
             }
         }
@@ -204,6 +210,9 @@ final class GhostAppearanceProbe: ObservableObject {
         for y in stride(from: 0, to: h, by: stepY) {
             for x in stride(from: 0, to: w, by: stepX) {
                 let o = y * bpr + x * bpp
+                // All-zero = transparent: a hole where an excluded (our own)
+                // window sat — no screen content, not dark text.
+                if bpp >= 4, ptr[o] == 0, ptr[o + 1] == 0, ptr[o + 2] == 0, ptr[o + 3] == 0 { continue }
                 let r = Double(ptr[o]) / 255, g = Double(ptr[o + 1]) / 255, b = Double(ptr[o + 2]) / 255
                 lums.append(0.299 * r + 0.587 * g + 0.114 * b)
             }

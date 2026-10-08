@@ -175,6 +175,17 @@ enum AccessibilityBridge {
 
     /// The caret position as a character offset. Uses the selected text range's
     /// location (caret == zero-length selection).
+    /// Length of the field's text in UTF-16 units — `AXNumberOfCharacters` (cheap,
+    /// no copy of the text), else the value's length.
+    static func textLength(of element: AXUIElement) -> Int? {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &value) == .success,
+           let n = value as? Int {
+            return n
+        }
+        return stringValue(of: element)?.utf16.count
+    }
+
     static func caretOffset(of element: AXUIElement) -> Int? {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value)

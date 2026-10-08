@@ -40,6 +40,8 @@ final class Engine {
     /// AX text length captured at keydown (before the app processes the key), so we
     /// can poll until the keystroke actually lands in the field ("host publish").
     private var hostBaselineLen: Int?
+    /// Text length read in the tap for the edit being handled.
+    private var pendingBaselineLen: Int?
     /// When set (after accepting a suggestion), `hostPublished()` waits for the field
     /// to reach at least this length — synthesized multi-char inserts land
     /// incrementally, and predicting on a half-landed insert regenerates stale text.
@@ -47,12 +49,10 @@ final class Engine {
     /// When the user last typed — presentation waits for a pause (see
     /// `presentWhenSettled`), because Electron caret bounds lag during bursts.
     private var lastKeystrokeAt = Date.distantPast
+    /// Caret rect read just before the latest keystroke reached the app.
+    private var caretAnchor: CGRect?
     /// One-shot flag so the disabled state is logged once, not per keystroke.
     private var loggedDisabled = false
-    /// Cotypist-style "parked seed": a suggestion generated speculatively
-    /// MID-BURST for a snapshot of the input, served instantly at the next pause
-    /// when the typed text still matches (possibly having typed INTO it — LCP).
-    private var parked: (input: String, suggestion: String)?
     /// One-shot bypass of prediction gates (force-activate shortcut).
     private var forceNextPrediction = false
     /// Per-app temporary pauses (bundle id → resume time).
@@ -216,7 +216,6 @@ final class Engine {
                 self.accessory.hide()
                 self.recordFieldWriting()
                 self.lastAXInput = nil
-                self.parked = nil   // parked seeds never cross app boundaries
                 // Track the new app's focused element via AX notifications so we
                 // notice field changes INSTANTLY, not on the next keystroke.
                 if let newPid { self.installFocusObserver(pid: newPid) }
@@ -317,7 +316,6 @@ final class Engine {
                 self.lastAXInput = nil
                 self.buffer = ""
                 self.lastPredictedPrompt = ""
-                self.parked = nil   // parked seeds never cross field boundaries
                 self.updateAccessoryButton()
                 // Host-aware: a browser tab on a chat site gets the chat treatment.
                 let policy = AppPolicyStore.policy(
@@ -450,7 +448,7 @@ final class Engine {
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
             .insertionStrategy
         DispatchQueue.main.async {
-            self.lastKeystrokeAt = Date()
+            self.markEdit()
             TextInserter.insert(word, strategy: strategy)
         }
     }
@@ -466,12 +464,12 @@ final class Engine {
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
             .insertionStrategy
         let baselineLen = AccessibilityBridge.focusedElement()
-            .flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
+            .flatMap { AccessibilityBridge.textLength(of: $0) }
         DispatchQueue.main.async {
-            self.lastKeystrokeAt = Date()
+            self.markEdit()
             TextInserter.insert(toInsert, strategy: strategy)
             self.hostBaselineLen = baselineLen
-            self.hostExpectedLen = baselineLen.map { $0 + toInsert.count }
+            self.hostExpectedLen = baselineLen.map { $0 + toInsert.utf16.count }
             self.schedulePrediction()
         }
     }
@@ -564,8 +562,13 @@ final class Engine {
         accessory.onClick = {
             NotificationCenter.default.post(name: .tabTypeOpenSettings, object: nil)
         }
+        // The tap holds the key until it returns: read only what must be read
+        // BEFORE the app sees the key, then let it through and do the rest.
         monitor.onEdit = { chars, isDeletion, _ in
-            MainActor.assumeIsolated { self.handleEdit(chars: chars, isDeletion: isDeletion) }
+            MainActor.assumeIsolated {
+                self.beforeEditDelivered()
+                DispatchQueue.main.async { self.handleEdit(chars: chars, isDeletion: isDeletion) }
+            }
         }
         monitor.handleControlKey = { keyCode, flags in
             MainActor.assumeIsolated { self.handleControlKey(keyCode: keyCode, flags: flags) }
@@ -683,8 +686,24 @@ final class Engine {
 
     // MARK: - Editing
 
-    private func handleEdit(chars: String, isDeletion: Bool) {
+    /// An edit is about to reach the field (a keystroke the tap sees first, or text
+    /// we insert): stamp the clock and remember the caret BEFORE it lands —
+    /// presentation knows the field has caught up once the caret leaves it.
+    private func markEdit() {
         lastKeystrokeAt = Date()
+        caretAnchor = AccessibilityBridge.focusedElement().flatMap { AccessibilityBridge.caretRect(of: $0) }
+    }
+
+    /// In the tap, before the key reaches the app: the clock, the caret and the
+    /// text length as they are BEFORE the edit.
+    private func beforeEditDelivered() {
+        let element = AccessibilityBridge.focusedElement()
+        lastKeystrokeAt = Date()
+        caretAnchor = element.flatMap { AccessibilityBridge.caretRect(of: $0) }
+        pendingBaselineLen = element.flatMap { AccessibilityBridge.textLength(of: $0) }
+    }
+
+    private func handleEdit(chars: String, isDeletion: Bool) {
         // Freeze screen captures while typing (see ScreenContextProvider).
         ScreenContextProvider.shared.lastEditAt = lastKeystrokeAt
         // Track focus changes to reset the fallback buffer and enable enhanced
@@ -730,10 +749,9 @@ final class Engine {
         // the suggestion and shrink it in place instead of killing and regenerating
         // it — stable, instant, and zero model calls for matching keystrokes.
         if !isDeletion, currentSuggestion != nil, let remainder = session.typeThrough(chars) {
-            // Hide immediately (the old position now overlaps the just-typed char);
-            // the shrunken ghost reappears at the settled caret after the pause —
-            // during a fast burst it stays hidden, exactly like Cotypist.
-            overlay.hide()
+            // Move the ghost past the typed characters right away (their width in
+            // the field's font); the settled caret then confirms the position.
+            if !overlay.advance(typed: chars, remainder: remainder) { overlay.hide() }
             presentWhenSettled(suggestion: remainder, isNewSuggestion: false)
             return
         }
@@ -769,10 +787,9 @@ final class Engine {
 
         guard router.current.isReady else { return }
 
-        // Snapshot AX text length *now* — the tap fires before the app inserts the
-        // key, so this is the pre-keystroke length. We poll until it changes.
-        hostBaselineLen = AccessibilityBridge.focusedElement()
-            .flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
+        // The pre-keystroke text length, read in the tap (see `beforeEditDelivered`).
+        // We poll until it changes.
+        hostBaselineLen = pendingBaselineLen
 
         schedulePrediction()
     }
@@ -784,7 +801,8 @@ final class Engine {
     /// caret THEN, and presents. A newer keystroke re-arms the wait; a changed
     /// suggestion aborts it.
     private func presentWhenSettled(suggestion: String, isNewSuggestion: Bool,
-                                    allowWrap: Bool = false, minSettle: TimeInterval? = nil) {
+                                    allowWrap: Bool = false, minSettle: TimeInterval? = nil,
+                                    earlyOnCaretMove: Bool = true) {
         // A remainder being Tabbed through is protected — a NEW suggestion must
         // never steal its display slot (re-presents of the remainder itself come
         // through with isNewSuggestion: false).
@@ -797,23 +815,44 @@ final class Engine {
         let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         // Electron bounds lag ~0.3s after the last keystroke; 0.4s matches the
         // observed Cotypist timing, with the occupancy/ink-band guards as backstop.
-        // A caller can lower it (parked seeds: content already proven ready).
-        let settle: TimeInterval = minSettle ?? (policy.laggyCaret ? 0.4 : 0.12)
-        let elapsed = Date().timeIntervalSince(lastKeystrokeAt)
-        if elapsed >= settle {
-            guard currentSuggestion == suggestion else { return }
+        // The settle time is a DEADLINE, not a wait: the caret is ready as soon as
+        // it has left where it was before the last keystroke (native apps: one
+        // read; Electron, whose bounds trail the text: two matching reads).
+        let deadline: TimeInterval = minSettle ?? (policy.laggyCaret ? 0.4 : 0.12)
+        let keystrokeAt = lastKeystrokeAt
+        var previous: CGRect?
+
+        func attempt() {
+            guard currentSuggestion == suggestion, keystrokeAt == lastKeystrokeAt else { return }
             let element = AccessibilityBridge.focusedElement()
             let caretRect = element.flatMap { AccessibilityBridge.caretRect(of: $0) }
+            let elapsed = Date().timeIntervalSince(keystrokeAt)
+            var ready = elapsed >= deadline
+            if !ready, earlyOnCaretMove, let caretRect, let anchor = caretAnchor,
+               Self.caretMoved(caretRect, from: anchor) {
+                ready = !policy.laggyCaret || previous.map { Self.sameCaret($0, caretRect) } == true
+                previous = caretRect
+            }
+            guard ready else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + min(0.016, max(0.001, deadline - elapsed))) {
+                    attempt()
+                }
+                return
+            }
             let windowRect = element.flatMap { ContextReader.windowRect(of: $0) }
             present(suggestion: suggestion, inlineCaret: caretRect, windowRect: windowRect,
                     policy: policy, isNewSuggestion: isNewSuggestion, allowWrap: allowWrap)
-            return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (settle - elapsed) + 0.01) { [weak self] in
-            guard let self, self.currentSuggestion == suggestion else { return }
-            self.presentWhenSettled(suggestion: suggestion, isNewSuggestion: isNewSuggestion,
-                                    allowWrap: allowWrap, minSettle: minSettle)
-        }
+        attempt()
+    }
+
+    /// The caret has left `anchor` (a typed or deleted character moved it).
+    nonisolated static func caretMoved(_ caret: CGRect, from anchor: CGRect) -> Bool {
+        abs(caret.maxX - anchor.maxX) >= 0.5 || abs(caret.minY - anchor.minY) >= 0.5
+    }
+
+    nonisolated static func sameCaret(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.maxX - b.maxX) < 0.5 && abs(a.minY - b.minY) < 0.5 && abs(a.height - b.height) < 0.5
     }
 
     /// Wait for the keystroke to appear in the AX tree (host-publish), then predict.
@@ -846,25 +885,13 @@ final class Engine {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         }
 
-        // Laggy-caret (Electron) apps: mid-burst AX text is INCOMPLETE, so every
-        // continuous-mode request captures stale input, gets generated, and is
-        // discarded by the freshness guard — while keeping the model busy so the
-        // real post-pause request queues behind garbage. Predict only after the
-        // same idle pause used for presentation (the Cotypist request cadence).
-        let laggy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId()).laggyCaret
-        let useContinuous = !laggy && settings.continuousGeneration
+        // Every app predicts as soon as the keystroke lands in the field: a newer
+        // keystroke cancels the generation in flight (the engine's request gate),
+        // so mid-burst requests never queue up behind each other, and the
+        // stale-result guard drops anything the field has moved past.
+        let useContinuous = settings.continuousGeneration
             && !(PowerMonitor.shared.isLowPower && settings.batteryUseDebounce)
-        if laggy {
-            // Speculative "parked seed": generate for the current snapshot while
-            // the user is still typing — the KV prefix cache makes it cheap — and
-            // PARK the result. At the pause, a matching park serves instantly.
-            let token = scheduleToken
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
-                guard let self, token == self.scheduleToken else { return }
-                self.runPrediction(speculative: true)
-            }
-            poll(0.2)    // brief idle-wait; the freshness guard + re-kick cover stale input
-        } else if useContinuous {
+        if useContinuous {
             poll(0.02)   // minimal settle — just a chance for host-publish, no idle-wait
         } else {
             // Initial settle = the configured debounce (+ battery back-off), then fast polls.
@@ -964,7 +991,7 @@ final class Engine {
     private func hostPublished() -> Bool {
         guard let baseline = hostBaselineLen,
               let element = AccessibilityBridge.focusedElement(),
-              let len = AccessibilityBridge.stringValue(of: element)?.count else {
+              let len = AccessibilityBridge.textLength(of: element) else {
             return true
         }
         // After a Tab-accept, synthesized multi-char inserts land incrementally —
@@ -973,7 +1000,7 @@ final class Engine {
         return len != baseline
     }
 
-    private func runPrediction(speculative: Bool = false) {
+    private func runPrediction() {
         let front = NSWorkspace.shared.frontmostApplication
         let frontApp = front?.localizedName
         let bundleId = front?.bundleIdentifier
@@ -1098,37 +1125,13 @@ final class Engine {
             return
         }
 
-        // Parked seed: a speculative generation from mid-burst may already cover
-        // the current input — serve it instantly instead of generating again.
-        if !speculative, let p = parked {
-            parked = nil
-            if ctx.input == p.input {
-                Log.shared.debug("predict -> \"\(p.suggestion)\" [parked] (0ms)")
-                presentWhenSettled(suggestion: p.suggestion, isNewSuggestion: true, minSettle: 0.25)
-                return
-            }
-            // The user typed INTO the parked suggestion — serve the remaining tail.
-            if ctx.input.hasPrefix(p.input) {
-                let typedExtra = String(ctx.input.dropFirst(p.input.count))
-                if !typedExtra.isEmpty, p.suggestion.hasPrefix(typedExtra),
-                   p.suggestion.count > typedExtra.count {
-                    let tail = String(p.suggestion.dropFirst(typedExtra.count))
-                    Log.shared.debug("predict -> \"\(tail)\" [parked lcp] (0ms)")
-                    presentWhenSettled(suggestion: tail, isNewSuggestion: true, minSettle: 0.25)
-                    return
-                }
-            }
-        }
-
         // Remember the field's AX text — commitRecentInput reads this when the
         // message is sent (the keystroke buffer alone is lossy).
         if let bid = bundleId, !ctx.input.isEmpty { lastAXInput = (bid, ctx.input, ctx.windowTitle) }
 
         // Skip redundant work if nothing changed since the last prediction.
-        if !speculative {
-            if ctx.dedupKey == lastPredictedPrompt { return }
-            lastPredictedPrompt = ctx.dedupKey
-        }
+        if ctx.dedupKey == lastPredictedPrompt { return }
+        lastPredictedPrompt = ctx.dedupKey
 
         let engine = router.current
         let clipboard = settings.useClipboardContext ? freshClipboardText() : ""
@@ -1139,14 +1142,13 @@ final class Engine {
             clipboard: clipboard,
             documentStart: ctx.documentStart,
             screenIsConversation: policy.transcriptViaAX,
-            speculative: speculative,
             maxWords: (PowerMonitor.shared.isLowPower && settings.batteryShorterCompletions)
                 ? min(settings.maxWords, 3) : settings.maxWords)
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
-        if !speculative { lastReq = req }   // word-alternatives regeneration basis
+        lastReq = req   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
         let startedAt = DispatchTime.now()
 
@@ -1191,7 +1193,7 @@ final class Engine {
 
     /// Post-processing for a finished suggestion (already exact insertion text):
     /// after-cursor duplicate trim, staleness/remainder/repeat checks via the
-    /// session, parking for speculative requests, then presentation.
+    /// session, then presentation.
     private func handlePredictionResult(raw: String?, req: CompletionRequest, ctxInput: String,
                                         policy: AppPolicy, startedAt: DispatchTime) async {
         let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1_000_000
@@ -1224,13 +1226,6 @@ final class Engine {
             return
         }
 
-        // Speculative results are PARKED, never presented — being "stale" is their
-        // entire purpose (they were generated for a mid-burst snapshot).
-        if req.speculative {
-            parked = (input: ctxInput, suggestion: suggestion)
-            Log.shared.debug("predict -> parked \"\(suggestion)\" for snapshot tail \"…\(String(ctxInput.suffix(24)))\" (\(elapsedMs)ms)")
-            return
-        }
 
         // The field may have changed while the model was generating (more typing,
         // deletions, Cmd+A wipe) — a result for stale input must never be shown.
@@ -1350,6 +1345,7 @@ final class Engine {
                     // No room for even a couple of characters inline — HUD pill.
                     self.overlay.showHUD(text: suggestion, windowRect: windowRect)
                 }
+                Log.shared.debug("ghost painted \(Int(Date().timeIntervalSince(self.lastKeystrokeAt) * 1000))ms after the last edit")
             }
             /// AX-styled baseline: the caret-box estimate plus this field's measured
             /// correction, once known.
@@ -1376,7 +1372,13 @@ final class Engine {
             // painting inline, look at the actual PIXELS where the ghost would go.
             // Occupied → retry once at a freshly-read caret; still occupied → HUD.
             // Unknown → trust AX.
-            overlay.hide()   // our own previous ghost must not trip the check
+            // Skipped when AX vouches for the caret: nothing follows it in the text,
+            // the app reports its text style, and the caret has moved off where it
+            // was before the keystroke (so it isn't stale) — then there's nothing
+            // the strip could reveal, and the screenshot would only cost time.
+            let trustedCaret = caretAtEnd && style != nil
+                && (caretAnchor.map { Self.caretMoved(caretRect, from: $0) } ?? false)
+            if !trustedCaret { overlay.hide() }   // our own ghost must not trip the check
             Task { [weak self] in
                 guard let self else { return }
                 // Stop the strip well short of the input box's right edge — trailing
@@ -1393,7 +1395,7 @@ final class Engine {
                     return await GhostAppearanceProbe.hasTextPixels(in: strip)
                 }
                 var target = anchored
-                var occupied = await checkOccupied(target)
+                var occupied = trustedCaret ? false : await checkOccupied(target)
                 guard self.currentSuggestion == suggestion else { return }   // stale
                 if occupied == true {
                     try? await Task.sleep(nanoseconds: 250_000_000)
@@ -1554,7 +1556,9 @@ final class Engine {
             includeTrailingSpace: settings.includeTrailingSpace)
         guard let (toInsert, remainder) = session.accept(whole: whole, options: options) else { return false }
 
-        overlay.hide()
+        // Slide the rest of the ghost to where the inserted text will end — no
+        // gap while the app catches up; the settled caret confirms it below.
+        if !overlay.advance(typed: toInsert, remainder: remainder) { overlay.hide() }
         if session.isProtectingRemainder {
             // Tear down the prediction machinery armed by earlier real keystrokes,
             // or it fires on the just-inserted word and replaces the remainder:
@@ -1574,7 +1578,7 @@ final class Engine {
         // below can wait until the WHOLE insert has landed in the AX tree —
         // predicting on pre-insertion text regenerates the suggestion just accepted.
         let baselineLen = AccessibilityBridge.focusedElement()
-            .flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
+            .flatMap { AccessibilityBridge.textLength(of: $0) }
 
         // Insert on the next tick so we return from the tap callback first.
         DispatchQueue.main.async {
@@ -1582,21 +1586,23 @@ final class Engine {
             // stamp the keystroke clock manually — the settle gate must treat the
             // insertion like typing, or the remainder ghost paints at the
             // pre-insert caret and overlaps the inserted text.
-            self.lastKeystrokeAt = Date()
+            self.markEdit()
             TextInserter.insert(toInsert, strategy: strategy)
             if remainder.isEmpty {
                 // Suggestion exhausted — speculatively fetch the next continuation so it
                 // appears sooner than waiting for the next keystroke's debounce.
                 guard self.currentSuggestion == nil else { return }
                 self.hostBaselineLen = baselineLen
-                self.hostExpectedLen = baselineLen.map { $0 + toInsert.count }
+                self.hostExpectedLen = baselineLen.map { $0 + toInsert.utf16.count }
                 self.schedulePrediction()
                 return
             }
             // The synthesized keystrokes are processed by the target app slightly
             // after we post them — the settle gate re-reads the caret only after
             // things quiet down, so the remaining ghost lands at the new position.
-            self.presentWhenSettled(suggestion: remainder, isNewSuggestion: false)
+            // A multi-character insert lands key by key: wait the full settle
+            // instead of trusting the first caret move.
+            self.presentWhenSettled(suggestion: remainder, isNewSuggestion: false, earlyOnCaretMove: false)
         }
         return true
     }

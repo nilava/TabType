@@ -12,6 +12,13 @@ final class LlamaEngine {
     /// The most recent shown-or-gated result, for the word picker's alternatives.
     private(set) var lastResult: TabTypeKit.CompletionResult?
 
+    /// Recent results by exact prompt + options: re-typing, deleting back, or a
+    /// repeat request for unchanged input is answered without running the model.
+    private var recent: [String: (result: TabTypeKit.CompletionResult, at: Date)] = [:]
+    private var recentOrder: [String] = []
+    private static let recentCapacity = 200
+    private static let recentLifetime: TimeInterval = 30
+
     init(models: LlamaModelManager = .shared) {
         self.models = models
     }
@@ -38,10 +45,22 @@ final class LlamaEngine {
             options.hint = Array(hint.text.utf8)
             hintSupport = hint.support
         }
-        let id = models.inference.beginRequest()
+        let cacheKey = "\(models.loadedID ?? "")|\(models.adapterName ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
         let start = Date()
-        guard let result = try? await models.inference.complete(text, options: options, requestID: id) else {
-            return nil   // superseded by a newer keystroke, or not loaded
+        let result: TabTypeKit.CompletionResult
+        let cached: Bool
+        if let hit = recent[cacheKey], Date().timeIntervalSince(hit.at) < Self.recentLifetime {
+            _ = models.inference.beginRequest()   // still supersedes older work
+            result = hit.result
+            cached = true
+        } else {
+            let id = models.inference.beginRequest()
+            guard let fresh = try? await models.inference.complete(text, options: options, requestID: id) else {
+                return nil   // superseded by a newer keystroke, or not loaded
+            }
+            result = fresh
+            cached = false
+            remember(fresh, key: cacheKey)
         }
         lastResult = result
         let ms = Int(Date().timeIntervalSince(start) * 1000)
@@ -49,13 +68,25 @@ final class LlamaEngine {
         // accepted characters, fewer wrong suggestions on a repeat-writer set).
         let threshold = (result.followsHint && hintSupport >= 2) ? options.showThreshold * 0.5 : options.showThreshold
         guard result.confidence >= threshold else {
-            Log.shared.debug("v2: \"\(result.text)\" below threshold (conf \(String(format: "%.2f", result.confidence)) < \(options.showThreshold)) \(ms)ms")
+            Log.shared.debug("v2: \"\(result.text)\" below threshold (conf \(String(format: "%.2f", result.confidence)) < \(options.showThreshold)) \(ms)ms\(cached ? " [cached]" : "")")
             Statistics.shared.record(.belowConfidence)
             return nil
         }
         Statistics.shared.recordLatency(ms: ms)
-        Log.shared.debug("v2: \"\(result.text)\" conf \(String(format: "%.2f", result.confidence))\(result.followsHint ? " · from your writing" : "") · \(result.promptTokens) prompt tokens · \(ms)ms")
+        Log.shared.debug("v2: \"\(result.text)\" conf \(String(format: "%.2f", result.confidence))\(result.followsHint ? " · from your writing" : "") · \(result.promptTokens) prompt tokens · \(ms)ms\(cached ? " [cached]" : "")")
         return result.text
+    }
+
+    private func remember(_ result: TabTypeKit.CompletionResult, key: String) {
+        if recent[key] == nil { recentOrder.append(key) }
+        recent[key] = (result, Date())
+        while recentOrder.count > Self.recentCapacity { recent[recentOrder.removeFirst()] = nil }
+    }
+
+    /// Forget cached results (model, adapter or settings changed).
+    func clearRecent() {
+        recent.removeAll()
+        recentOrder.removeAll()
     }
 
     /// Words that fit in place of `word`, given the text before it — the word

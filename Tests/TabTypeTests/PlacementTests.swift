@@ -82,3 +82,18 @@ final class PlacementTests: XCTestCase {
         XCTAssertEqual(three.height, one.height * 3, accuracy: 2)
     }
 }
+
+final class SettleTests: XCTestCase {
+    func testCaretMovedByTypedCharacter() {
+        let before = CGRect(x: 100, y: 50, width: 1, height: 18)
+        XCTAssertTrue(Engine.caretMoved(before.offsetBy(dx: 7, dy: 0), from: before))
+        XCTAssertTrue(Engine.caretMoved(CGRect(x: 10, y: 70, width: 1, height: 18), from: before))   // wrapped
+        XCTAssertFalse(Engine.caretMoved(before.offsetBy(dx: 0.2, dy: 0), from: before))
+    }
+
+    func testSameCaretNeedsPositionAndHeight() {
+        let a = CGRect(x: 100, y: 50, width: 1, height: 18)
+        XCTAssertTrue(Engine.sameCaret(a, a.offsetBy(dx: 0.3, dy: 0)))
+        XCTAssertFalse(Engine.sameCaret(a, CGRect(x: 100, y: 50, width: 1, height: 22)))
+    }
+}
