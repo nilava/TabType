@@ -25,12 +25,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 | Area | File(s) |
 |---|---|
-| Keystroke capture + orchestration | `Core/Engine.swift`, `Core/KeystrokeMonitor.swift` |
-| Context gathering | `Core/ContextReader.swift`, `Core/ScreenContextProvider.swift`, `Core/TranscriptExtractor.swift` |
+| Keystroke capture + orchestration | `Core/Engine.swift` (incl. the local field copy and lookahead), `Core/KeystrokeMonitor.swift` (listen-only tap), `Core/HotKeyCenter.swift` (Tab & shortcuts as hotkeys) |
+| Context gathering | `Core/ContextReader.swift`, `Core/ScreenContextProvider.swift` (OCR above the field), `Core/TranscriptExtractor.swift` (accessibility fallback), `Core/TerminalPrompt.swift` |
 | Prompt assembly | `TabTypeKit/Prompting/` (`PromptAssembler`, `ModelTemplate`) |
-| Local inference | `TabTypeKit/Inference/` (llama.cpp runtime), `TabTypeKit/Decoding/` (confidence-gated decoder), `Core/Engines/LlamaEngine.swift` |
+| Local inference | `TabTypeKit/Inference/` (llama.cpp runtime), `TabTypeKit/Decoding/` (token healing, phrase beam search, confidence gate), `Core/Engines/LlamaEngine.swift` |
 | Models | `TabTypeKit/Catalog/` (`models.json`, downloader), `UI/` model settings |
-| Rendering | `Core/SuggestionOverlay.swift`, `Core/FieldFitCache.swift`, `TabTypeKit/Placement/` (font fitting) |
+| Rendering | `Core/SuggestionOverlay.swift` (ghost, text mirror), `Core/AccessibilityBridge.swift` (caret, AX font), `Core/FieldFitCache.swift`, `TabTypeKit/Placement/` (font fitting) |
 | Suggestion lifecycle | `TabTypeKit/Session/` (type-through, Tab accept) |
 | Personalization | `Core/WritingStore.swift`, `TabTypeKit/Personalization/` (suffix index) |
 | Per-app rules | `Core/AppPolicy.swift` |

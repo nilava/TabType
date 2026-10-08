@@ -27,7 +27,7 @@
 >
 > **This is an early alpha.** It works and it's genuinely useful day-to-day, but expect rough edges. It's an open-source project that **needs your help** — [try it](#-install), [file issues](../../issues), and [send PRs](CONTRIBUTING.md). Bug reports on specific apps are the single most valuable contribution right now.
 >
-> **Built by a senior full-stack engineer (5+ years), in the open, with heavy use of AI.** Full transparency: AI was a real power tool throughout. The **code** was written with AI coding-assistant help; the **app icon/artwork and the documentation are AI-generated**; and **suggestions come from a third-party open-weights LLM** (Qwen3 base, via llama.cpp) running locally — TabType trains no models and reviews no output. This is still **not** a thin "AI generated a wrapper" app — it's a native macOS app with a hand-tuned local-inference pipeline and 130+ tests, with a human accountable for the architecture, debugging, and result. **See the complete [AI disclosure below](#-full-ai-disclosure--who-and-what-built-this).**
+> **Built by a senior full-stack engineer (5+ years), in the open, with heavy use of AI.** Full transparency: AI was a real power tool throughout. The **code** was written with AI coding-assistant help; the **app icon/artwork and the documentation are AI-generated**; and **suggestions come from a third-party open-weights LLM** (Qwen3 base, via llama.cpp) running locally — TabType trains no models and reviews no output. This is still **not** a thin "AI generated a wrapper" app — it's a native macOS app with a hand-tuned local-inference pipeline and 150+ tests, with a human accountable for the architecture, debugging, and result. **See the complete [AI disclosure below](#-full-ai-disclosure--who-and-what-built-this).**
 
 ## 🙌 Help wanted — let's build the best open autocomplete for Mac
 
@@ -43,39 +43,38 @@ No corporate backing, no paid tier, no ads — just trying to make something gre
 
 ## What it is
 
-As you type, TabType shows a dimmed **ghost-text** prediction of what comes next. Press **Tab** to accept a word, again for the next, or accept the whole thing at once. A local **base** language model (Qwen3-4B on 16 GB+ Macs, Qwen3-1.7B on 8 GB, as GGUF via [llama.cpp](https://github.com/ggml-org/llama.cpp) on Metal) continues your text directly — no chat prompt, no "assistant voice" — and a confidence-gated decoder only shows a suggestion when the model is actually sure. Personalized to how *you* write, and it all happens on-device.
+As you type, TabType shows a dimmed **ghost-text** prediction of what comes next. Press **Tab** to accept a word, again for the next, or a separate shortcut to accept it all. A local **base** language model (Qwen3-4B on 16 GB+ Macs, Qwen3-1.7B on 8 GB, as GGUF via [llama.cpp](https://github.com/ggml-org/llama.cpp) on Metal) continues your text directly — no chat prompt, no "assistant voice" — and a confidence-gated decoder only shows a suggestion when the model is actually sure. Personalized to how *you* write, and it all happens on-device.
 
 ## ✨ Features
 
 **Completions**
-- Inline ghost text everywhere you type, with pixel-matched placement and a text-mirroring mode for web apps
-- Type-through: keep typing and the suggestion shrinks to match, never flickers
-- Word-by-word or whole-suggestion accept; **word alternatives** popup (⌃⌥Space) when you want options
-- **Confidence-gated**: every suggestion carries the model's own probability; low-confidence guesses are never shown, and multi-word phrases only extend while confidence holds
-- **Token healing**: mid-word completions are re-tokenized so the model finishes the word you're typing instead of starting a new one
-- **Font-fitted ghost text**: TabType renders candidate fonts and matches them against the pixels of the field, so the ghost matches the app's font and baseline
+- Inline ghost text everywhere you type, drawn **in the app's own font, size and colour** (read from the app, measured from the screen when the app doesn't say) and wrapped like real text across the field
+- **Phrase search**: 9 candidate phrases are explored together and the most probable whole phrase wins; every suggestion carries the model's own probability, and weak guesses are never shown
+- **Token healing**: mid-word suggestions finish the word you're typing instead of starting a new one
+- **Instant Tab chains**: the words after the suggestion are computed while it's on screen, so Tab-Tab-Tab keeps going without waiting
+- **Fast**: the ghost appears as soon as the app catches up (no fixed delays); a generation already running when you type ahead is kept and reused; recent results are cached
+- Type-through, **word alternatives** (⌃⌥Space), Esc to dismiss — and TabType only *listens* to the keyboard: Tab is taken from the app only while a suggestion is showing
 
-**Context awareness** — suggestions that actually fit what you're doing
-- Reads the whole visible conversation in **15+ chat apps** (Slack, WhatsApp, Telegram, Signal, Teams, Discord…) **and chat websites** (claude.ai, ChatGPT, Gemini…) via the **accessibility tree** — clean, no screenshots — with screenshot OCR as the fallback elsewhere
-- **Document-aware long-form context**: in writing apps (Pages, Word, Notes, Ulysses…) it reads a large window around your cursor *plus* the document's opening lines, so mid-document suggestions stay on topic
-- **Per-app transparency**: Settings → Apps shows exactly what context recipe applies to every app (Chat / Document / Code editor badges + a plain-English summary) — and lets you change it per app
-- Remembers **your recent messages** in a conversation and **your previous writing** so it continues your train of thought
-- **Learns from your writing** (opt-in): an encrypted local index of what you've written nudges suggestions toward your names, phrases, and sign-offs
+**Context awareness** — suggestions that fit what you're doing
+- Reads the conversation or document **above the field you're typing in** (on-device OCR, like Cotypist) — chats, email, docs — with the accessibility tree as a fallback; captures when you pause, waits for a chat's first capture, and keeps a message's context steady while you type it
+- **Document-aware long-form context**: in writing apps it reads a large window around your cursor *plus* the document's opening lines
+- **Per-app transparency**: Settings → Apps shows exactly what each app gets — and lets you change it
+- **Learns from your writing** (opt-in): an encrypted local index of what you've written nudges suggestions toward your names, phrases and sign-offs
+- **Terminals**: suggestions inside AI agents' prompts (Claude Code, Codex, Gemini CLI) — never at the shell
 
 **Private by design**
-- 100% on-device inference; the only network call is the one-time model download from Hugging Face
-- Optional writing history is **AES-GCM encrypted** on disk (key file readable only by you) and never leaves the Mac
-- Password fields and password managers are never read
+- 100% on-device inference; the only network requests are the model download and the public model list
+- Optional writing history is **AES-GCM encrypted** on disk and never leaves the Mac
+- Password fields and password managers are never read; small fields (search boxes) are skipped
 
 **Models**
 - Curated GGUF catalog (Qwen3 0.6B–4B base, Gemma 4) with RAM-based recommendations; resumable, SHA-256-verified downloads
-- Optional **voice adapter**: load your own LoRA adapter (GGUF) to steer the model's style
 
 **Control**
-- Per-app and per-website policies (tone, language, enable/disable, mid-line behavior)
+- Per-app and per-website settings: enable/disable, mid-line suggestions, ghost size and offset, custom instructions, a **text mirror** preview for apps where inline ghost text can't be placed
 - Code editors get suggestions only in chat panels, never the main editor
-- Low Power Mode tuning, force-activate & per-app pause shortcuts
-- Inline `/macros` (`/date`, `/uuid`, `10km->mi`, `2+2*3`), `:emoji`, and local autocorrect (incl. 6 Indian languages)
+- Force-activate, per-app pause and global toggle shortcuts
+- Inline `/macros` (`/date`, `/uuid`, `/10km->mi`, `/2+2*3`), `:emoji`, and local autocorrect (incl. 6 Indian languages)
 
 ## 🆚 How TabType compares
 
@@ -86,10 +85,10 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 | Runs on-device | ✅ | ✅ | ⚠️ mixed |
 | Works in any app (prose) | ✅ | ✅ | ❌ code / single-word |
 | Learns your voice | ✅ | ✅ | ❌ |
-| Screen / conversation context | ✅ AX tree + OCR | ✅ | ❌ |
-| Notarized / polished | ⚠️ alpha, unnotarized | ✅ | ✅ |
+| Screen / conversation context | ✅ OCR + AX fallback | ✅ | ❌ |
+| Notarized, auto-updating | ❌ (alpha) | ✅ | ✅ |
 
-**vs [Cotypist](https://cotypist.app/)** — the closest comparison and our north star. TabType matches its core: on-device models, screen/accessibility context, personalization, text mirroring, speculative "parked" generation, and word alternatives. Cotypist is more polished, notarized, and has a paid tier; TabType is **free, open-source, and account-free**. We're the open project working toward Cotypist-grade quality.
+**vs [Cotypist](https://cotypist.app/)** — the closest comparison and our north star. TabType now follows its design closely: base-model phrase search, font matching from the app, context from above the field, listen-only keyboard with Tab as a hotkey, instant Tab chains, a text mirror. Cotypist is more polished, notarized, auto-updating and has a paid tier; TabType is **free, open-source and account-free**. Where they still differ (and why) is in the [detailed comparison](docs/COMPARISON.md).
 
 ### vs the open-source alternatives
 
@@ -99,18 +98,16 @@ There are a few other open-source macOS autocomplete projects — each great in 
 |---|:---:|:---:|:---:|:---:|
 | Open source | ✅ MIT | ✅ | ✅ | ✅ |
 | Inference backend | llama.cpp (Qwen3 base) | llama.cpp | on-device LLM | on-device LLM |
-| Context: screen OCR | ✅ | ✅ | — | ✅ focused window |
-| Context: accessibility-tree transcript | ✅ | — | — | — |
-| Remembers your recent messages / writing | ✅ | — | — | — |
+| Context: screen OCR | ✅ above the field | ✅ | — | ✅ focused window |
+| Context: accessibility-tree fallback | ✅ | — | — | — |
 | Learns from your writing (encrypted index) | ✅ | dictionary | — | — |
-| Speculative "parked" generation + KV cache | ✅ | — | — | — |
+| Phrase search + confidence gate + token healing | ✅ | — | — | — |
+| Instant Tab chains (lookahead) | ✅ | — | — | — |
 | Word alternatives | ✅ | — | — | — |
-| Text mirroring / baseline-probed rendering | ✅ | — | — | — |
-| Per-app & per-domain policies | ✅ | per-app | — | — |
-| Confidence-gated decoding + token healing | ✅ | — | — | — |
-| Font-fitted ghost text | ✅ | — | — | — |
+| Ghost in the app's own font | ✅ | — | — | — |
+| Per-app & per-domain settings | ✅ | per-app | — | — |
 
-**Where each shines:** [Sombra](https://github.com/andlsac/Sombra) pairs llama.cpp with fast macOS-dictionary completions — a clean, lightweight approach. [KeyType](https://github.com/johnbean393/KeyType) explores constrained/grammar decoding for tightly-shaped output. cotabby pioneered focused-window OCR context. TabType's bet is **deeper context** (accessibility-tree transcripts, your recent messages, your own writing) plus a **confidence-gated base-model decoder** and **Cotypist-grade UX** (speculative parking, mirror rendering, per-app policies). See the [detailed comparison](docs/COMPARISON.md).
+**Where each shines:** [Sombra](https://github.com/andlsac/Sombra) pairs llama.cpp with fast macOS-dictionary completions — a clean, lightweight approach. [KeyType](https://github.com/johnbean393/KeyType) explores constrained/grammar decoding for tightly-shaped output. cotabby pioneered focused-window OCR context. TabType's bet is **Cotypist-grade behaviour in the open**: a measured, confidence-gated base-model decoder, context from the screen, and placement that looks typed by the app. See the [detailed comparison](docs/COMPARISON.md).
 
 ## 📦 Install
 
@@ -122,7 +119,7 @@ There are a few other open-source macOS autocomplete projects — each great in 
 3. Launch it. macOS says *"TabType cannot be opened because Apple cannot check it for malicious software."* Click **Done** (not Move to Trash).
 4. Open **System Settings ▸ Privacy & Security**, scroll down, and click **"Open Anyway"** next to TabType. Confirm.
    - *Power users, instead of steps 3–4:* `xattr -dr com.apple.quarantine /Applications/TabType.app`
-5. Grant **Accessibility** when prompted (required — it's how TabType reads the text field and inserts completions). **Screen Recording** is optional (improves context in non-chat apps).
+5. Grant **Accessibility** when prompted (required — it's how TabType reads the text field and inserts completions). **Screen Recording** is strongly recommended: it's how TabType reads the conversation or document you're writing in, and measures fonts apps don't report.
 6. **First launch downloads the model** (~1.1–2.5 GB from Hugging Face, depending on your Mac's RAM tier). The menu-bar icon shows progress; suggestions start once it's ready.
 
 **Requirements:** Apple Silicon Mac (M1 or later), macOS 14+.
@@ -156,12 +153,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 The pipeline, end to end:
 
 ```
-KeystrokeMonitor (CGEventTap)
-   → ContextReader / ScreenContextProvider / TranscriptExtractor   (what you typed + surrounding context)
+KeystrokeMonitor (listen-only tap) + HotKeyCenter (Tab etc. while a ghost is up)
+   → ContextReader + local field copy / ScreenContextProvider (OCR above the field)
+                                                                   (what you typed + surrounding context)
    → PromptAssembler + ModelTemplate                               (budgeted, cache-friendly prompt)
-   → InferenceEngine / LlamaRuntime (llama.cpp, prefix-cached KV)  (local generation)
-   → CompletionDecoder                                             (token healing, parallel candidates, confidence gate)
-   → SuggestionSession → SuggestionOverlay + FontFitter            (type-through, Tab accept, font-fitted ghost)
+   → InferenceEngine / LlamaRuntime (llama.cpp, prefix-cached KV)  (local generation, 9-wide beam)
+   → CompletionDecoder                                             (token healing, phrase search, confidence gate)
+   → SuggestionSession → SuggestionOverlay (+ lookahead)           (type-through, Tab chains, ghost in the app's font)
 ```
 
 The model-agnostic pieces (runtime, decoder, prompt assembly, catalog, font fitting, personal index) live in the `TabTypeKit` library so the `tabtype-eval` harness exercises exactly what the app runs. Personalization (`WritingStore`, `PersonalIndex`/`SuffixIndex`), per-app rules (`AppPolicy`), and the settings UI (`SettingsView`) hang off this core. See [CONTRIBUTING.md](CONTRIBUTING.md) for a fuller tour.
@@ -170,7 +168,7 @@ The model-agnostic pieces (runtime, decoder, prompt assembly, catalog, font fitt
 
 TabType is built by a **senior full-stack engineer with 5+ years of experience**, in the open, **with heavy use of AI**. In the spirit of transparency, here is a complete accounting of what in this project is AI-generated:
 
-**Code** — Written with heavy AI coding-assistant help (in the [Claude Code](https://claude.com/claude-code) style), directed, reviewed, debugged, and architected by the author. This is **not** a thin "AI generated a wrapper" app: it's a native macOS application with a hand-tuned local-inference pipeline, reverse-engineering work to reach parity with the best in the category, careful Accessibility/Gatekeeper/AppKit integration, and 130+ tests. AI accelerated the typing; the engineering judgment and the hundreds of small correctness decisions are the author's.
+**Code** — Written with heavy AI coding-assistant help (in the [Claude Code](https://claude.com/claude-code) style), directed, reviewed, debugged, and architected by the author. This is **not** a thin "AI generated a wrapper" app: it's a native macOS application with a hand-tuned local-inference pipeline, reverse-engineering work to reach parity with the best in the category, careful Accessibility/Gatekeeper/AppKit integration, and 150+ tests. AI accelerated the typing; the engineering judgment and the hundreds of small correctness decisions are the author's.
 
 **Icons & artwork** — The app icon and other visual assets are **AI-generated**.
 

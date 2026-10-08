@@ -260,7 +260,7 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Word stop rules, probability-gated phrase extension, trailing-space prediction
 - [x] Scoring (log-prob, duplicate merge) and confidence; `tabtype-eval sweep` for threshold tuning
 - [x] Alternatives output for the word picker
-- [ ] Synonyms via masked re-decode (moved to Phase 6 with the picker UI)
+- [x] ~~Synonyms via masked re-decode~~ — superseded: synonyms are ranked by P(word + following text | before) (Phase 6)
 - [x] Tuned defaults on seed-v1 (Gemma 4 E2B): extension 0.3, ≤4 words, show ≥0.2 — re-tune per model in Phase 3
 
 ### Phase 3 — Models & prompting ✅ (kit-level; UI in Phase 6)
@@ -281,7 +281,8 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Screen snapshots keyed by normalized window title, so a previous channel/thread never passes as the current conversation
 - [x] `SecretSanitizer` (keys, tokens, JWTs, PEM, passwords, signed URLs, credentials in URLs, Luhn-valid cards, IBANs, random tokens) applied to prompt context, screen history, typing history, phrase memory and recent messages
 - [x] Clipboard (opt-in, fresh, prose-only), recent sent messages from AX, credential/secure-field skip — already in place
-- [ ] Hidden-input editors (CodeMirror/Monaco) and web text-marker reading when AXValue is missing
+- [x] Hidden-input editors (Monaco, CodeMirror 5): the hidden textarea's frame is the caret (v2.1)
+- [ ] Web text-marker reading when AXValue is missing
 
 ### Phase 5 — Placement ✅ (core)
 - [x] Bundled OFL fonts (Inter, Roboto, Open Sans, Source Sans 3, Source Code Pro, Lato, Nunito, JetBrains Mono) with licences, registered at launch
@@ -292,8 +293,8 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Fixed: mirror backdrop/caret could linger under a later inline ghost
 - [x] TabTypeKit is compiled with -O even in Debug (decoder + fitter are hot loops)
 - [ ] Caret: AXBoundsForLine fallback, collapsed text-marker caret, line-height cache
-- [ ] Per-app font scale / vertical offset in the overrides UI
-- [ ] Manual test matrix in real apps (needs live typing: TextEdit, Notes, Mail, Messages, Slack, Claude, Safari/Chrome, VS Code, Terminal)
+- [x] Per-app font scale / vertical offset in the overrides UI
+- [ ] Manual test matrix in real apps — done live (v2.1): TextEdit, Chrome, Safari, Terminal (agent prompt), Claude, Slack; still to do: Notes, Mail, Messages, VS Code chat, WhatsApp
 
 ### Phase 6a — v2 engine in the app (pulled forward) ✅
 - [x] `LlamaEngine` plugs into the existing engine slot; v2 output bypasses v1's echo/assistant-speak/mid-word repair (exact insertion text); dictionary instant layer off for v2
@@ -329,3 +330,15 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Settings migration from v1 keys (retired keys removed on launch)
 - [x] Local latency telemetry + short/long accept stats in Statistics pane
 - [x] README/COMPARISON update; `release.sh` now builds `CONFIG=Release` (Release build verified locally; versioning, DMG and tag left to the maintainer)
+
+### Phase 9 — Cotypist parity pass (v2.1) ✅
+Reconstructed from Cotypist's behaviour and app structure (no code or prompt text copied); each change measured on `tabtype-eval` or verified live.
+- [x] Placement: AX font/colour (`AXFont` / `AXForegroundColor`), family-only fit when only the size is reported, capture squeeze + transparent-hole fixes, own ghost view, Cotypist's caret checks, single-line snap, visual line start, full-width wrapping, field notifications, no fade-in
+- [x] Latency: no fixed settles (ready when the caret reaches its expected position), local field copy with timestamped keys, in-flight generation kept and spliced, lookahead for instant Tab chains, 30 s result cache, 0.25 s AX timeout
+- [x] Decoder: 9-wide phrase beam from the best first word (exact pruning), extension bar 0.2, show bar 0.10 / 0.15 (boundary / mid-word); Cotypist's length steps 2 / 4 / 7 / 10
+- [x] Context: OCR above the field (≤800pt, column ±70pt), capture on pause, wait for a chat's first capture, context held steady per message, AX transcript as fallback
+- [x] Keyboard: listen-only tap; Tab / accept-all / Esc as hotkeys only while a suggestion is up; Chromium same-field focus echo ignored
+- [x] Gating: typo check on the current word only, minimum field size, terminals only inside AI-agent prompts
+- [x] Text mirror preview (per app); settings pruned (timing, battery, context size, crop mode, mirroring, voice adapter, Tab-inserts-all)
+- [x] Prompt sections with token budgets — built, measured worse with our own delimiters, kept off (`--sections`)
+- [ ] Not yet: personalization strength, battery mode, insertion workarounds, caret retry plan / line-height cache, notarization + auto-update
