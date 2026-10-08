@@ -253,7 +253,8 @@ final class Engine {
             guard !self.session.isProtectingRemainder else { return }
             self.lastFreshRekick = Date()
             self.lastPredictedPrompt = ""   // context changed — bypass the dedup skip
-            self.forceNextPrediction = true
+            // (Not `forceNextPrediction`: that bypasses the safety gates — URL /
+            // email / code-editor / mid-line — and nothing reset it here.)
             Log.shared.debug("fresh screen context for \(bundleId) — re-kicking prediction")
             self.schedulePrediction()
         }
