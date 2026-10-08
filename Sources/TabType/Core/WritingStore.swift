@@ -65,6 +65,24 @@ final class WritingStore: ObservableObject {
         persist()
     }
 
+    /// One-time import: `import-writing.jsonl` next to the store (one
+    /// `{"bundleId": …, "text": …}` per line — e.g. past messages recovered
+    /// from the local log) is recorded like anything written, then deleted.
+    func importPendingFile() {
+        let url = directory.appendingPathComponent("import-writing.jsonl")
+        guard let data = try? String(contentsOf: url, encoding: .utf8) else { return }
+        var count = 0
+        for line in data.split(separator: "\n") {
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String],
+                  let text = obj["text"], let bundleId = obj["bundleId"] else { continue }
+            let before = documents.count
+            record(text, bundleId: bundleId, fieldKey: nil, kind: .message)
+            if documents.count > before { count += 1 }
+        }
+        try? FileManager.default.removeItem(at: url)
+        Log.shared.info("writing: imported \(count) messages")
+    }
+
     /// Everything stored (for sync between Macs).
     var allDocuments: [Document] { documents }
 

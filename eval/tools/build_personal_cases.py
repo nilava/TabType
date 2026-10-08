@@ -95,3 +95,16 @@ OUT.write_text("\n".join(json.dumps(c, ensure_ascii=False) for c in cases) + "\n
 from collections import Counter
 print(f"{len(blocks)} prompts → {len(messages)} messages → {len(seen)} prose messages → {len(cases)} cases")
 print(Counter(c["category"] for c in cases), Counter(c["app"] for c in cases).most_common(8))
+
+# --export-writing <path>: the same messages as {"bundleId", "text"} lines, for
+# TabType's one-time import into "Learn from your writing" (encrypted there).
+if "--export-writing" in sys.argv:
+    path = Path(sys.argv[sys.argv.index("--export-writing") + 1])
+    seen_export, rows = set(), []
+    for msg in messages:
+        text = msg["text"].strip()
+        if len(text) < 20 or not prose(text) or text.lower() in seen_export: continue
+        seen_export.add(text.lower())
+        rows.append(json.dumps({"bundleId": msg["app"], "text": text}, ensure_ascii=False))
+    path.write_text("\n".join(rows) + "\n")
+    print(f"exported {len(rows)} messages → {path}")

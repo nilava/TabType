@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Log.shared.info("ghost fonts: \(BundledFonts.families.joined(separator: ", "))")
 
         // The author's own writing (opt-in) → suffix index for personal phrasing.
+        WritingStore.shared.importPendingFile()   // before the index is built
         PersonalIndex.shared.start()
 
         // Start loading the model + spell dictionary right away.
