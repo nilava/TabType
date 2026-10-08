@@ -111,9 +111,8 @@ final class ScreenContextProvider: ObservableObject {
         let caretRect = focused.flatMap { AccessibilityBridge.caretRect(of: $0) }
         let windowFrame = AccessibilityBridge.focusedWindowFrame()
         let cropMode = AppSettings.ScreenCropMode.caretCropped
-        // Chat apps: the conversation reads far cleaner from the AX tree than from
-        // pixels — try that first, OCR only as fallback. Host-aware so web chats
-        // (claude.ai, ChatGPT…) get the transcript path inside a browser too.
+        // Chat apps (host-aware, so web chats count too) keep the accessibility
+        // transcript as a fallback for when the screen read produces nothing.
         let frontHost = AccessibilityBridge.frontmostURLHost()
         let frontTitle = focused.flatMap { ContextReader.windowOf($0) }
             .flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) }
@@ -133,31 +132,36 @@ final class ScreenContextProvider: ObservableObject {
         let ocrField = columnFrame
 
         Task.detached(priority: .utility) {
-            if let windowBox {
-                if let transcript = TranscriptExtractor.extract(
-                    windowElement: windowBox.element,
-                    excludingSubtreeOf: focusedBox?.element,
-                    columnFrame: columnFrame, budget: transcriptBudget),
-                   transcript.count >= 80 {
-                    await MainActor.run {
-                        self.capturing = false
-                        self.append(app: frontName, bundleId: frontBid, text: transcript,
-                                    windowTitle: frontTitle,
-                                    host: frontHost, source: "ax transcript")
-                    }
-                    return
-                }
-            }
+            // Like Cotypist, every app — chats included — reads what's on screen
+            // above the input field. The accessibility transcript is only the
+            // fallback when that produces nothing.
             let capture = await ScreenContextProvider.captureFocusedWindow(
                 pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect,
                 windowFrame: windowFrame, fieldFrame: ocrField)
+            if let (app, bid, text) = capture, text.count >= 12 {
+                await MainActor.run {
+                    self.capturing = false
+                    self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
+                }
+                return
+            }
+            if let windowBox,
+               let transcript = TranscriptExtractor.extract(
+                    windowElement: windowBox.element,
+                    excludingSubtreeOf: focusedBox?.element,
+                    columnFrame: columnFrame, budget: transcriptBudget),
+               transcript.count >= 80 {
+                await MainActor.run {
+                    self.capturing = false
+                    self.append(app: frontName, bundleId: frontBid, text: transcript,
+                                windowTitle: frontTitle,
+                                host: frontHost, source: "ax transcript")
+                }
+                return
+            }
             await MainActor.run {
                 self.capturing = false
-                if let (app, bid, text) = capture, text.count >= 12 {
-                    self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
-                } else {
-                    Log.shared.debug("screen memory: capture produced no usable text this round")
-                }
+                Log.shared.debug("screen memory: capture produced no usable text this round")
             }
         }
     }
@@ -252,7 +256,7 @@ final class ScreenContextProvider: ObservableObject {
     /// Capture and OCR the **focused** window (the frontmost app's largest window) —
     /// the context around where the user is typing, like cotabby/KeyType. Strips the
     /// focused field's own text (`fieldText`) so we don't echo what's being typed.
-    nonisolated private static func captureFocusedWindow(
+    nonisolated static func captureFocusedWindow(
         pid: pid_t?, fieldText: String, cropMode: AppSettings.ScreenCropMode, caretRect: CGRect?, windowFrame: CGRect?,
         fieldFrame: CGRect? = nil
     ) async -> (String, String, String)? {

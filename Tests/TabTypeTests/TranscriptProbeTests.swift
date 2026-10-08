@@ -5,8 +5,9 @@ import AppKit
 /// Manual: TABTYPE_TRANSCRIPT_APP=<app name> — prints what the transcript
 /// extractor reads from that app's focused window (the context a chat gets).
 final class TranscriptProbeTests: XCTestCase {
-    func testDumpTranscript() throws {
+    func testDumpTranscript() async throws {
         guard let name = ProcessInfo.processInfo.environment["TABTYPE_TRANSCRIPT_APP"] else { throw XCTSkip("manual") }
+        _ = await MainActor.run { NSApplication.shared }   // window-server connection for capture
         let app = try XCTUnwrap(NSWorkspace.shared.runningApplications.first { $0.localizedName == name })
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AccessibilityBridge.enableEnhancedAccessibility(pid: app.processIdentifier)
@@ -30,5 +31,10 @@ final class TranscriptProbeTests: XCTestCase {
                                                columnFrame: field.flatMap { AccessibilityBridge.elementFrame(of: $0) },
                                                budget: 1400)
         print("TRANSCRIPT_BEGIN\n\(text ?? "nil")\nTRANSCRIPT_END")
+        let ocr = await ScreenContextProvider.captureFocusedWindow(
+            pid: app.processIdentifier, fieldText: "", cropMode: .caretCropped, caretRect: nil,
+            windowFrame: AccessibilityBridge.elementFrame(of: window as! AXUIElement),
+            fieldFrame: field.flatMap { AccessibilityBridge.elementFrame(of: $0) })
+        print("OCR_BEGIN\n\(ocr?.2 ?? "nil")\nOCR_END")
     }
 }
