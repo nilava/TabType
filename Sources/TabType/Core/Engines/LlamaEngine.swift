@@ -65,11 +65,14 @@ final class LlamaEngine {
         }
         lastResult = result
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        // At a word boundary the next word is a fresh guess and a lower bar pays
-        // off; mid-word, finishing the word should be surer (eval seed-v1, Qwen3-4B
-        // base: 0.1 / 0.15 vs 0.2 everywhere — shown 80 → 91%, precision 73 → 66%).
+        // Measured on the author's own writing (867 cases from their real typing):
+        // finishing a half-typed word is right far more often than guessing the
+        // next one (53–65% vs 21–32% when shown), so mid-word gets the low bar
+        // (×0.4 → 0.08) and a word boundary the higher one (×0.75 → 0.15). Versus
+        // 0.10 / 0.15: same characters saved, fewer wrong ghosts on both their
+        // writing (42.0 → 37.4%) and seed-v1 (30.7 → 28.6%).
         let midWord = request.beforeCursor.last.map { $0.isLetter || $0.isNumber } ?? false
-        var threshold = options.showThreshold * (midWord ? 0.75 : 0.5)
+        var threshold = options.showThreshold * (midWord ? 0.4 : 0.75)
         // A phrase the author has used repeatedly earns a lower bar still (eval:
         // +13% accepted characters on a repeat-writer set).
         if result.followsHint && hintSupport >= 2 { threshold *= AppSettings.shared.personalization.repeatedPhraseBar }

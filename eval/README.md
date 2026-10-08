@@ -53,6 +53,27 @@ Tune the show threshold from one ungated decoder run:
 .build/release/tabtype-eval sweep ungated.json
 ```
 
+## Your own writing (private)
+
+`python3 -I eval/tools/build_personal_cases.py` turns what you typed (as recorded
+in your local `~/Library/Logs/TabType/tabtype.log`, with the screen context you
+saw) into cases at `eval/private/personal-v1.jsonl` — gitignored, never shared.
+Run the eval on it like any case set. `--history <corpus>` adds your other
+messages as personal history (leave-one-out), `--plain-chat` drops the
+conversation framing.
+
+What the maintainer's own writing (867 cases, mostly chat) showed, Qwen3-4B base:
+- Real chat is much harder than seed-v1: next-word recall tops out at ~32%.
+  Finishing a half-typed word is right 53–65% of the time when shown; guessing
+  the next word at a boundary only 21–32% → show bars of 0.08 mid-word and 0.15
+  at a boundary (fewer wrong ghosts on both sets, same characters saved).
+- Screen context helps (recall 27.5 → 31.0%); learning from your writing helps
+  (+5% characters with only 177 messages); "Name: …" conversation framing only
+  helps when the context really is a labelled transcript (OCR text: 31.8 → 33.4%
+  chat recall without it).
+- Gemma 4 E4B is no better than Qwen3-4B here (30.2 vs 31.0% recall) and slower
+  (217 vs 148 ms).
+
 ## Suggestion length and capture noise (seed-v1, Qwen3-4B base, header, threshold 0.2)
 
 The first-word numbers (recall 58.3%, precision 73.2%) don't depend on length;

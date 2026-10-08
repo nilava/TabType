@@ -100,7 +100,10 @@ public struct PromptAssembler: Sendable {
         }
         let typed = typedText(c)
         let screen = screenText(c)
-        if let screen, c.isConversation {
+        // Only a real transcript ("Name: message" lines) gets the author's turn as
+        // its next line; on screen text read by OCR that framing measured worse
+        // (author's own writing: chat recall 31.8 → 33.4% without it).
+        if let screen, c.isConversation, Self.looksLikeTranscript(screen) {
             // The author's reply is the next line of the conversation.
             return join(parts + [screen + "\n" + speaker(c) + ": " + typed])
         }
@@ -167,6 +170,14 @@ public struct PromptAssembler: Sendable {
         }
         parts.append("<text>\n\(typed)")
         return parts.joined(separator: "\n")
+    }
+
+    /// Most lines read "Speaker: message".
+    static func looksLikeTranscript(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !lines.isEmpty else { return false }
+        let labelled = lines.filter { $0.range(of: #"^[^:\n]{1,32}: \S"#, options: .regularExpression) != nil }
+        return Double(labelled.count) >= Double(lines.count) * 0.5
     }
 
     // MARK: Chat models: instruction in the user turn, typed text pre-filled

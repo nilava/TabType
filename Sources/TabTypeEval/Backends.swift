@@ -18,8 +18,9 @@ extension EvalCase {
     /// The writing situation as the app would describe it to the prompt assembler.
     /// `noisy`: what a live capture adds — window chrome and unrelated text around
     /// OCR'd context (non-conversation cases), and unrelated clipboard contents.
-    func promptContext(authorName: String?, noisy: Bool = false) -> PromptContext {
-        let isConversation = category == "chat" && context.contains(": ")
+    func promptContext(authorName: String?, noisy: Bool = false, conversations: Bool = true) -> PromptContext {
+        // Like the app: chat apps are conversations whatever the context looks like.
+        let isConversation = conversations && category == "chat" && !context.isEmpty
         var screen = context
         var clipboard: String?
         if noisy {
@@ -83,6 +84,7 @@ final class DecoderBackend: CompletionBackend {
     private let history: [CorpusEntry]?
     private let hintFactor: Double
     private let noisy: Bool
+    private let conversations: Bool
     private var indexes: [Int: SuffixIndex] = [:]
     private(set) var hintsOffered = 0
     private(set) var hintsUsed = 0
@@ -90,9 +92,10 @@ final class DecoderBackend: CompletionBackend {
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
          template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
-         noisy: Bool = false, sections: Bool = false,
+         noisy: Bool = false, sections: Bool = false, conversations: Bool = true,
          history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
         self.noisy = noisy
+        self.conversations = conversations
         self.history = history
         self.hintFactor = hintFactor
         self.runtime = runtime
@@ -107,7 +110,8 @@ final class DecoderBackend: CompletionBackend {
     }
 
     func complete(_ evalCase: EvalCase) async throws -> String? {
-        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName, noisy: noisy))
+        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName, noisy: noisy,
+                                                               conversations: conversations))
             ?? EvalPrompt.document(for: evalCase)
         var options = self.options
         var support = 0

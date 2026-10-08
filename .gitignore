@@ -21,3 +21,6 @@ Sources/**/*.gguf
 
 # Test coverage artifacts
 *.profraw
+
+# Eval sets built from the author's own writing — never committed.
+eval/private/

@@ -112,6 +112,7 @@ case "run":
                                  situationHeader: arguments.contains("--header"),
                                  noisy: arguments.contains("--noise"),
                                  sections: arguments.contains("--sections"),
+                                 conversations: !arguments.contains("--plain-chat"),
                                  history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
                                  hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
     case let other:
