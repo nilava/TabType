@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "models": [
     {
       "id": "qwen3-0.6b-base",
@@ -110,7 +110,7 @@
       "licenseURL": "https://ai.google.dev/gemma/docs/gemma_4_license",
       "requiresTermsNotice": false,
       "minimumRAMGB": 24,
-      "showThreshold": 0.25,
+      "showThreshold": 0.2,
       "extensionThreshold": 0.2
     }
   ],

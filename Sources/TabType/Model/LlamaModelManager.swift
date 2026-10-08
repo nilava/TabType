@@ -161,7 +161,7 @@ final class LlamaModelManager: ObservableObject {
                 decoderOptions = entry.decoderOptions()
                 loadedID = id
                 status = .ready(id: id)
-                Log.shared.info("v2 engine: loaded \(entry.name) (\(entry.template)) in \(Int(Date().timeIntervalSince(start) * 1000))ms")
+                Log.shared.info("v2 engine: loaded \(entry.name) (\(entry.template)) in \(Int(Date().timeIntervalSince(start) * 1000))ms — show bar \(decoderOptions?.showThreshold ?? 0), extend bar \(decoderOptions?.extensionThreshold ?? 0), catalog v\(catalog.version)")
                 await selfTest(entry)
             } catch {
                 status = .failed(id: id, message: "Couldn't load \(entry.name): \(error)")

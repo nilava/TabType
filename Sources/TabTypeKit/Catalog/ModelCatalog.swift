@@ -100,8 +100,9 @@ public struct ModelCatalog: Codable, Sendable, Equatable {
         "https://raw.githubusercontent.com/nilava/TabType/main/Sources/TabTypeKit/Catalog/models.json")!
 
     /// The freshest usable catalog: remote (cached to `cacheURL` on success), else the
-    /// last cached copy, else the bundled one. A remote catalog older than the
-    /// bundled one, or one that fails to decode, is ignored.
+    /// last cached copy, else the bundled one. Only a STRICTLY newer remote or
+    /// cached catalog replaces the bundled one — an equal version from `main`
+    /// would silently undo this build's tuning. Undecodable ones are ignored.
     public static func latest(remote: URL = remoteURL, cacheURL: URL?,
                               session: URLSession = .shared) async -> ModelCatalog {
         let bundled = (try? bundled()) ?? ModelCatalog(version: 0, models: [], recommendations: [])
@@ -109,12 +110,12 @@ public struct ModelCatalog: Codable, Sendable, Equatable {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         if let (data, response) = try? await session.data(for: request),
            (response as? HTTPURLResponse)?.statusCode == 200,
-           let fetched = try? decode(data), fetched.version >= bundled.version, !fetched.models.isEmpty {
+           let fetched = try? decode(data), fetched.version > bundled.version, !fetched.models.isEmpty {
             if let cacheURL { try? data.write(to: cacheURL, options: .atomic) }
             return fetched
         }
         if let cacheURL, let data = try? Data(contentsOf: cacheURL), let cached = try? decode(data),
-           cached.version >= bundled.version, !cached.models.isEmpty {
+           cached.version > bundled.version, !cached.models.isEmpty {
             return cached
         }
         return bundled
