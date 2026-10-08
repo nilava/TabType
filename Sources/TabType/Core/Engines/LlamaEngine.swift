@@ -64,14 +64,19 @@ final class LlamaEngine {
         }
         lastResult = result
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        // A phrase the author has used repeatedly earns a lower bar (eval: +13%
-        // accepted characters, fewer wrong suggestions on a repeat-writer set).
-        let threshold = (result.followsHint && hintSupport >= 2) ? options.showThreshold * 0.5 : options.showThreshold
+        // At a word boundary the next word is a fresh guess and a lower bar pays
+        // off; mid-word, finishing the word should be surer (eval seed-v1, Qwen3-4B
+        // base: 0.1 / 0.15 vs 0.2 everywhere — shown 80 → 91%, precision 73 → 66%).
+        let midWord = request.beforeCursor.last.map { $0.isLetter || $0.isNumber } ?? false
+        var threshold = options.showThreshold * (midWord ? 0.75 : 0.5)
+        // A phrase the author has used repeatedly earns a lower bar still (eval:
+        // +13% accepted characters on a repeat-writer set).
+        if result.followsHint && hintSupport >= 2 { threshold *= 0.5 }
         // Lookahead (speculative) results stay out of the statistics.
         let quiet = request.speculative
         guard result.confidence >= threshold else {
             if quiet { return nil }
-            Log.shared.debug("v2: \"\(result.text)\" below threshold (conf \(String(format: "%.2f", result.confidence)) < \(options.showThreshold)) \(ms)ms\(cached ? " [cached]" : "")")
+            Log.shared.debug("v2: \"\(result.text)\" below threshold (conf \(String(format: "%.2f", result.confidence)) < \(String(format: "%.2f", threshold))) \(ms)ms\(cached ? " [cached]" : "")")
             Statistics.shared.record(.belowConfidence)
             return nil
         }

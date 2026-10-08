@@ -63,6 +63,8 @@ final class Engine {
     private var lastKeystrokeAt = Date.distantPast
     /// Caret rect read just before the latest keystroke reached the app.
     private var caretAnchor: CGRect?
+    /// Screen/transcript capture scheduled for the next typing pause.
+    private var pauseCapture: DispatchWorkItem?
     /// One-shot flag so the disabled state is logged once, not per keystroke.
     private var loggedDisabled = false
     /// One-shot bypass of prediction gates (force-activate shortcut).
@@ -716,8 +718,22 @@ final class Engine {
     }
 
     private func handleEdit(chars: String, isDeletion: Bool) {
-        // Freeze screen captures while typing (see ScreenContextProvider).
+        // Freeze screen captures while typing (see ScreenContextProvider), and
+        // capture once the typing pauses — otherwise a long message keeps the
+        // context from before it started.
         ScreenContextProvider.shared.lastEditAt = lastKeystrokeAt
+        pauseCapture?.cancel()
+        let capture = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId(),
+                                               host: AccessibilityBridge.frontmostURLHost())
+            if (self.settings.useScreenContext || policy.forceScreenContext) && policy.includesScreenContext
+                && !PowerMonitor.shared.shouldPauseCapture {
+                ScreenContextProvider.shared.refreshIfStale()
+            }
+        }
+        pauseCapture = capture
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1, execute: capture)
         // Track focus changes to reset the fallback buffer and enable enhanced
         // accessibility for Electron/Chromium apps (Slack, VS Code, browsers…).
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
@@ -1041,7 +1057,7 @@ final class Engine {
         // One cap for both the fetch and the prompt budget so they can't diverge.
         // Host-aware: in browsers, only same-site entries count as current context.
         let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
-        var screenContext = screenContextEnabled
+        let screenContext = screenContextEnabled
             ? ScreenContextProvider.shared.contextText(for: bundleId, cap: screenCap, host: host) : ""
         let ctx = ContextReader.gather(
             fallbackBuffer: buffer,
@@ -1072,16 +1088,6 @@ final class Engine {
             return
         }
 
-        // A truly empty line gives a small model nothing to anchor on, so it can
-        // latch onto screen noise — but the old threshold (12 chars) blinded the
-        // first words of EVERY message and toggled the <on_screen> section in and
-        // out of the prompt, invalidating the prewarmed KV prefix exactly when
-        // latency matters most. Reply-drift on short prefixes is already handled
-        // by the continuation reminder, StartGuard, and stripAssistantSpeak.
-        if !policy.forceScreenContext {
-            let currentLine = ctx.input.split(separator: "\n", omittingEmptySubsequences: false).last ?? ""
-            if currentLine.trimmingCharacters(in: .whitespaces).count < 3 { screenContext = "" }
-        }
 
         // Require an actual focused element — like Cotypist, never suggest when
         // nothing is focused/selected (even if the keystroke buffer has text, e.g.
@@ -1147,13 +1153,14 @@ final class Engine {
 
         Task { [weak self] in
             guard let self else { return }
-            // Completing a misspelling is never what the user wants — skip the whole
-            // generation when the last word, or the word being typed, looks like a
-            // typo (opt-out via Settings ▸ Text Tools). A half-typed word counts
-            // only when it can't be a name or jargon: 4+ letters, lowercase, and no
-            // word on screen or earlier in the text starts with it.
+            // Completing a misspelling is never what the user wants — skip the
+            // generation while the word being typed looks like a typo (opt-out via
+            // Settings ▸ Text Tools). Like Cotypist, only the CURRENT word counts:
+            // finished words (slang, other languages, names) never block. It must
+            // also be 4+ letters, lowercase, and not the start of any word on
+            // screen or earlier in the text.
             if self.settings.skipOnTypo, let (token, isPartial) = Engine.typoCheckToken(ctx.input),
-               !isPartial || Engine.partialMayBeTypo(token, context: ctx.input + "\n" + screenContext),
+               isPartial, Engine.partialMayBeTypo(token, context: ctx.input + "\n" + screenContext),
                await SpellChecker.shared.isLikelyTypo(
                    word: token, isPartial: isPartial, language: self.settings.autocorrectLanguage) {
                 Log.shared.debug("predict -> (typo before caret, skipped: \"\(token)\")")

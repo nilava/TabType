@@ -88,7 +88,12 @@ final class ScreenContextProvider: ObservableObject {
             let title = Self.stableTitle(AccessibilityBridge.focusedElement()
                 .flatMap { ContextReader.windowOf($0) }
                 .flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) })
-            let known = history.contains { $0.bundleId == bid && $0.host == host && $0.windowTitle == title }
+            // Only a FRESH capture counts — an expired one is discarded by
+            // `contextText`, so treating it as known left the prompt empty.
+            let known = history.contains {
+                $0.bundleId == bid && $0.host == host && $0.windowTitle == title
+                    && Date().timeIntervalSince($0.time) < 20
+            }
             guard !known else { return }
         }
         capturing = true
@@ -125,6 +130,7 @@ final class ScreenContextProvider: ObservableObject {
         // walk keeps only text in that column, so sidebars (session/contact lists)
         // stop masquerading as the conversation.
         let columnFrame = focused.flatMap { AccessibilityBridge.elementFrame(of: $0) }
+        let ocrField = columnFrame
 
         Task.detached(priority: .utility) {
             if let windowBox {
@@ -143,7 +149,8 @@ final class ScreenContextProvider: ObservableObject {
                 }
             }
             let capture = await ScreenContextProvider.captureFocusedWindow(
-                pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect, windowFrame: windowFrame)
+                pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect,
+                windowFrame: windowFrame, fieldFrame: ocrField)
             await MainActor.run {
                 self.capturing = false
                 if let (app, bid, text) = capture, text.count >= 12 {
@@ -246,7 +253,8 @@ final class ScreenContextProvider: ObservableObject {
     /// the context around where the user is typing, like cotabby/KeyType. Strips the
     /// focused field's own text (`fieldText`) so we don't echo what's being typed.
     nonisolated private static func captureFocusedWindow(
-        pid: pid_t?, fieldText: String, cropMode: AppSettings.ScreenCropMode, caretRect: CGRect?, windowFrame: CGRect?
+        pid: pid_t?, fieldText: String, cropMode: AppSettings.ScreenCropMode, caretRect: CGRect?, windowFrame: CGRect?,
+        fieldFrame: CGRect? = nil
     ) async -> (String, String, String)? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
@@ -301,8 +309,27 @@ final class ScreenContextProvider: ObservableObject {
             // AX caret rects, SCWindow frames, and CGImage crop rects all use a
             // top-left origin, so no flip.
             var caretNormX: CGFloat?
+            // Best (Cotypist's region): what's ABOVE the input field — the
+            // conversation or document it belongs to — up to 800pt, in the field's
+            // column ±70pt. The field itself and everything beside it drop out.
+            let scaleX = CGFloat(image.width) / window.frame.width
+            let scaleY = CGFloat(image.height) / window.frame.height
+            if let field = fieldFrame, field.width >= 60 {
+                let top = field.minY - window.frame.minY
+                let height = min(top, 800)
+                let left = max(0, field.minX - 70 - window.frame.minX)
+                let right = min(window.frame.width, field.maxX + 70 - window.frame.minX)
+                let rect = CGRect(x: left * scaleX, y: (top - height) * scaleY,
+                                  width: (right - left) * scaleX, height: height * scaleY)
+                if height >= 20, right - left >= 60, let cropped = image.cropping(to: rect.integral) {
+                    image = cropped
+                    guard let text = ocr(image, excluding: fieldText, cropMode: .caretCropped) else { return nil }
+                    let app = window.owningApplication?.applicationName ?? "Window"
+                    let bid = window.owningApplication?.bundleIdentifier ?? ""
+                    return (app, bid, text)
+                }
+            }
             if cropMode == .caretCropped, let caret = caretRect {
-                let scaleY = CGFloat(image.height) / window.frame.height
                 // caret position relative to the window's top-left corner
                 let localY = caret.midY - window.frame.minY
                 let cropHeightPts: CGFloat = 500   // ±250 around the caret line
@@ -335,6 +362,8 @@ final class ScreenContextProvider: ObservableObject {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
+        request.automaticallyDetectsLanguage = true
+        request.minimumTextHeight = 0.004
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
             try handler.perform([request])
