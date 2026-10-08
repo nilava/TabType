@@ -273,12 +273,15 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] Eval: base beats instruct at equal noise on both families; 8 GB → Qwen3-1.7B base, 16 GB+ → Qwen3-4B base (see `eval/README.md`)
 - [ ] Larger tier candidate (Qwen3-8B base) and a multilingual case set before trusting tiers for non-English writers
 
-### Phase 4 — Context
-- [ ] `FieldSnapshot` (AX + text markers + hidden-input editor detection)
-- [ ] `EnvironmentContext`: scoped Vision OCR, idle-only capture, content-hash keys
-- [ ] Clipboard (opt-in, fresh, prose-only); recent sent messages from AX
-- [ ] `SecretSanitizer` with fixture tests for each secret class
-- [ ] Credential/secure-field/secure-input skip
+### Phase 4 — Context ✅ (core)
+- [x] Measured: screen context is worth +13.5 pts recall overall, +18 pts in chats (Qwen3-4B base, seed-v1)
+- [x] Field snapshot: one AX value read per keystroke; UTF-16-correct caret split (fixes drift after emoji); window title + field placeholder captured
+- [x] Situation header ("App — window title — placeholder") for base models: +2.1 recall / +2.6 precision on Qwen3-4B (within noise, consistent direction); chat templates use it as "where I'm typing"
+- [x] Page URL via the enclosing web area (Chromium), cached per focused element
+- [x] Screen snapshots keyed by normalized window title, so a previous channel/thread never passes as the current conversation
+- [x] `SecretSanitizer` (keys, tokens, JWTs, PEM, passwords, signed URLs, credentials in URLs, Luhn-valid cards, IBANs, random tokens) applied to prompt context, screen history, typing history, phrase memory and recent messages
+- [x] Clipboard (opt-in, fresh, prose-only), recent sent messages from AX, credential/secure-field skip — already in place
+- [ ] Hidden-input editors (CodeMirror/Monaco) and web text-marker reading when AXValue is missing
 
 ### Phase 5 — Placement
 - [ ] `CaretResolver` with retry plan + `LineHeightCache`

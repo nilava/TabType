@@ -25,6 +25,10 @@ enum ContextReader {
         /// The document's opening lines when the caret window didn't reach the
         /// start (long-form apps) — empty otherwise.
         var documentStart: String = ""
+        /// The focused window's title ("#design — Acme — Slack", a document name…).
+        var windowTitle: String = ""
+        /// The field's placeholder ("Message Priya", "Reply…"), when it has one.
+        var placeholder: String = ""
     }
 
     /// - fallbackBuffer: keystroke buffer used when AX text isn't available.
@@ -41,11 +45,14 @@ enum ContextReader {
         let focused = AccessibilityBridge.focusedElement()
         let window = focused.flatMap { windowOf($0) }
 
+        // One read of the field's value + caret per keystroke; everything else is
+        // derived from it.
+        let full = focused.flatMap { AccessibilityBridge.stringValue(of: $0) }
+        let parts = full.map { AccessibilityBridge.split($0, caretUTF16: focused.flatMap(AccessibilityBridge.caretOffset)) }
+
         var input = ""
-        if let focused,
-           let axText = AccessibilityBridge.textBeforeCaret(of: focused, maxChars: inputChars),
-           !axText.isEmpty {
-            input = axText
+        if let before = parts?.before, !before.isEmpty {
+            input = String(before.suffix(inputChars))
         } else {
             input = String(fallbackBuffer.suffix(inputChars))
         }
@@ -53,16 +60,16 @@ enum ContextReader {
         // Long-form: if the field holds more text than the caret window shows,
         // the document's opening (title/intro) anchors what this is ABOUT.
         var documentStart = ""
-        if wantsDocumentHead, let focused, input.count >= inputChars,
-           let full = AccessibilityBridge.stringValue(of: focused),
-           full.count > inputChars {
+        if wantsDocumentHead, let full, input.count >= inputChars, full.count > inputChars {
             let head = String(full.prefix(300))
             // Don't duplicate: only useful when the head isn't already inside the window.
             if !input.hasPrefix(head) { documentStart = head }
         }
 
-        let afterCursor = focused.flatMap {
-            AccessibilityBridge.textAfterCaret(of: $0, maxChars: afterChars)
+        let afterCursor = parts.map { String($0.after.prefix(afterChars)) } ?? ""
+        let windowTitle = window.flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) } ?? ""
+        let placeholder = focused.flatMap {
+            AccessibilityBridge.stringAttribute(kAXPlaceholderValueAttribute as String, of: $0)
         } ?? ""
 
         let dedupKey = screenContext.isEmpty ? input : "\(screenContext.hashValue)|\(input)"
@@ -70,7 +77,7 @@ enum ContextReader {
         return Result(dedupKey: dedupKey, input: input, afterCursor: afterCursor,
                       focused: focused, window: window,
                       hasInput: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      documentStart: documentStart)
+                      documentStart: documentStart, windowTitle: windowTitle, placeholder: placeholder)
     }
 
     /// Frame of the window enclosing `element`, if resolvable.

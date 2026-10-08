@@ -105,7 +105,8 @@ case "run":
         backend = DecoderBackend(runtime: runtime, options: options,
                                  threshold: option("--threshold").flatMap(Double.init) ?? 0,
                                  template: template, templateName: templateName,
-                                 authorName: option("--author") ?? "Nilava Chowdhury")
+                                 authorName: option("--author") ?? "Nilava Chowdhury",
+                                 situationHeader: arguments.contains("--header"))
     case let other:
         fail("unknown backend \(other)")
     }

@@ -115,6 +115,40 @@ enum AccessibilityBridge {
         return credentialFieldKeywords.contains { haystack.contains($0) }
     }
 
+    /// Title of the focused element's window ("#design — Acme — Slack").
+    static func focusedWindowTitle() -> String? {
+        guard let focused = focusedElement(), let window = ContextReader.windowOf(focused) else { return nil }
+        return stringAttribute(kAXTitleAttribute as String, of: window)
+    }
+
+    /// A string attribute, or nil.
+    static func stringAttribute(_ name: String, of element: AXUIElement) -> String? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &ref) == .success else { return nil }
+        let s = (ref as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s?.isEmpty == false ? s : nil
+    }
+
+    /// The URL of the web page containing `element`: AXURL on the element itself, or
+    /// on its enclosing AXWebArea (where Chromium keeps it), or on the window.
+    static func pageURL(of element: AXUIElement) -> URL? {
+        var current: AXUIElement? = element
+        for _ in 0..<40 {
+            guard let el = current else { break }
+            var ref: CFTypeRef?
+            if AXUIElementCopyAttributeValue(el, kAXURLAttribute as CFString, &ref) == .success {
+                if let url = ref as? URL { return url }
+                if let s = ref as? String, let url = URL(string: s) { return url }
+            }
+            if role(of: el) == (kAXWindowRole as String) { break }
+            var parent: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(el, kAXParentAttribute as CFString, &parent) == .success,
+                  let parent else { break }
+            current = (parent as! AXUIElement)
+        }
+        return nil
+    }
+
     /// The full string value of a text element.
     static func stringValue(of element: AXUIElement) -> String? {
         var value: CFTypeRef?
@@ -138,7 +172,7 @@ enum AccessibilityBridge {
     /// isn't at the very end of the field's content).
     static func hasTextAfterCaret(of element: AXUIElement) -> Bool {
         guard let full = stringValue(of: element), let caret = caretOffset(of: element) else { return false }
-        return caret < full.count
+        return caret < (full as NSString).length
     }
 
     /// Children of an element (kAXChildren), or [] when unavailable.
@@ -181,18 +215,26 @@ enum AccessibilityBridge {
     /// this to gate rendering that would overlap any text after the caret.
     static func caretConfirmedAtEnd(of element: AXUIElement) -> Bool {
         guard let full = stringValue(of: element), let caret = caretOffset(of: element) else { return false }
-        return caret >= full.count
+        return caret >= (full as NSString).length
     }
 
     /// Text immediately preceding the caret, capped at `maxChars`.
     /// Returns nil if AX text isn't available for this element.
     static func textBeforeCaret(of element: AXUIElement, maxChars: Int) -> String? {
         guard let full = stringValue(of: element) else { return nil }
-        let caret = caretOffset(of: element) ?? full.count
-        let clampedCaret = min(max(caret, 0), full.count)
-        let chars = Array(full)
-        let start = max(0, clampedCaret - maxChars)
-        return String(chars[start ..< clampedCaret])
+        return String(split(full, caretUTF16: caretOffset(of: element)).before.suffix(maxChars))
+    }
+
+    /// Splits `text` at an AX caret offset. AX reports positions in UTF-16 code
+    /// units, so slicing by Swift Characters drifts after emoji and combining marks.
+    static func split(_ text: String, caretUTF16: Int?) -> (before: String, after: String) {
+        let ns = text as NSString
+        var caret = min(max(caretUTF16 ?? ns.length, 0), ns.length)
+        // Never cut a surrogate pair / composed character in half.
+        if caret > 0, caret < ns.length {
+            caret = ns.rangeOfComposedCharacterSequence(at: caret).location
+        }
+        return (ns.substring(to: caret), ns.substring(from: caret))
     }
 
     /// Text immediately following the caret, capped at `maxChars` — lets the model see
@@ -201,12 +243,7 @@ enum AccessibilityBridge {
     /// available for this element.
     static func textAfterCaret(of element: AXUIElement, maxChars: Int) -> String? {
         guard let full = stringValue(of: element) else { return nil }
-        let caret = caretOffset(of: element) ?? full.count
-        let chars = Array(full)
-        let clampedCaret = min(max(caret, 0), chars.count)
-        let end = min(chars.count, clampedCaret + maxChars)
-        guard clampedCaret < end else { return "" }
-        return String(chars[clampedCaret ..< end])
+        return String(split(full, caretUTF16: caretOffset(of: element)).after.prefix(maxChars))
     }
 
     /// Screen rectangle (Quartz/top-left origin) of the caret, for overlay placement.
@@ -352,16 +389,20 @@ enum AccessibilityBridge {
 
     /// Best-effort host of the URL for the focused browser tab (via `kAXURLAttribute`
     /// on the focused element or its window). Returns nil for non-browser contexts.
+    /// Host of the frontmost page. Walks up to the enclosing web area (Chromium
+    /// keeps AXURL there, not on the field or window). Called several times per
+    /// keystroke, so the answer is cached per focused element for a second.
     static func frontmostURLHost() -> String? {
         guard let element = focusedElement() else { return nil }
-        if let h = urlHost(of: element) { return h }
-        var winRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &winRef) == .success,
-           let winRef {
-            return urlHost(of: winRef as! AXUIElement)
+        if let cached = hostCache, CFEqual(cached.element, element),
+           Date().timeIntervalSince(cached.at) < 1 {
+            return cached.host
         }
-        return nil
+        let host = pageURL(of: element)?.host
+        hostCache = (element, Date(), host)
+        return host
     }
+    nonisolated(unsafe) private static var hostCache: (element: AXUIElement, at: Date, host: String?)?
 
     private static func urlHost(of element: AXUIElement) -> String? {
         var value: CFTypeRef?

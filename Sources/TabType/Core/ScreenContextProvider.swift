@@ -1,4 +1,5 @@
 import AppKit
+import TabTypeKit
 import ScreenCaptureKit
 import Vision
 
@@ -21,6 +22,10 @@ final class ScreenContextProvider: ObservableObject {
         /// id, so without this a previous site's text masquerades as the current
         /// tab's context.
         var host: String?
+        /// Window title at capture time. Chat apps keep one window across
+        /// channels/threads; the title tells them apart, so a previous
+        /// conversation never passes for the current one.
+        var windowTitle: String?
     }
 
     private(set) var history: [Entry] = []
@@ -95,6 +100,8 @@ final class ScreenContextProvider: ObservableObject {
         // pixels — try that first, OCR only as fallback. Host-aware so web chats
         // (claude.ai, ChatGPT…) get the transcript path inside a browser too.
         let frontHost = AccessibilityBridge.frontmostURLHost()
+        let frontTitle = focused.flatMap { ContextReader.windowOf($0) }
+            .flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) }
         let policy = AppPolicyStore.policy(forBundleId: frontBid, host: frontHost)
         let tryAXTranscript = policy.transcriptViaAX
         // Extract exactly what the prompt will use (plus nothing that would be
@@ -119,6 +126,7 @@ final class ScreenContextProvider: ObservableObject {
                     await MainActor.run {
                         self.capturing = false
                         self.append(app: frontName, bundleId: frontBid, text: transcript,
+                                    windowTitle: frontTitle,
                                     host: frontHost, source: "ax transcript")
                     }
                     return
@@ -129,7 +137,7 @@ final class ScreenContextProvider: ObservableObject {
             await MainActor.run {
                 self.capturing = false
                 if let (app, bid, text) = capture, text.count >= 12 {
-                    self.append(app: app, bundleId: bid, text: text, host: frontHost)
+                    self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
                 } else {
                     Log.shared.debug("screen memory: capture produced no usable text this round")
                 }
@@ -138,21 +146,23 @@ final class ScreenContextProvider: ObservableObject {
     }
 
     private func append(app: String, bundleId: String, text: String,
-                        host: String? = nil, source: String = "ocr") {
+                        windowTitle: String? = nil, host: String? = nil, source: String = "ocr") {
         // Normalize away chat-UI jitter (timestamps, presence, "(edited)") BEFORE
         // storing — the stored snapshot must stay byte-identical between real
         // messages or every capture invalidates the prompt's KV prefix.
-        let normalized = TranscriptNormalizer.normalize(text)
+        let normalized = SecretSanitizer.sanitize(TranscriptNormalizer.normalize(text))
         guard normalized.count >= 12 else { return }
         // Meaningful-change gate: a real new message changes the (normalized)
         // tail; scroll/timestamp jitter doesn't. Same tail + similar length ⇒
         // keep the EXISTING snapshot so the prompt bytes don't move.
-        if let last = history.last(where: { $0.bundleId == bundleId && $0.host == host }),
+        if let last = history.last(where: {
+            $0.bundleId == bundleId && $0.host == host && $0.windowTitle == Self.stableTitle(windowTitle)
+        }),
            !TranscriptNormalizer.isMeaningfulChange(old: last.text, new: normalized) {
             return
         }
         history.append(Entry(time: Date(), app: app, bundleId: bundleId,
-                             text: normalized, host: host))
+                             text: normalized, host: host, windowTitle: Self.stableTitle(windowTitle)))
 
         let cutoff = Date().addingTimeInterval(-maxAge)
         history.removeAll { $0.time < cutoff }
@@ -168,7 +178,17 @@ final class ScreenContextProvider: ObservableObject {
     /// window are near-duplicates that would eat the whole budget — and staleness is
     /// enforced here too (append-time pruning alone lets an old entry linger while
     /// capture is paused).
-    func contextText(for bundleId: String?, cap: Int, host: String? = nil) -> String {
+    /// Window title without volatile decorations — unread counts "(3) ", "• ",
+    /// "*" dirty markers — so a new message doesn't look like a different window.
+    nonisolated static func stableTitle(_ title: String?) -> String? {
+        guard var t = title?.trimmingCharacters(in: .whitespaces), !t.isEmpty else { return nil }
+        t = t.replacingOccurrences(of: #"^(\(\d+\+?\)|\[\d+\]|[•●*])\s*"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"\s*(\(\d+\+?\)|[•●*])$"#, with: "", options: .regularExpression)
+        return t.isEmpty ? nil : t
+    }
+
+    func contextText(for bundleId: String?, cap: Int, host: String? = nil,
+                     windowTitle: String? = AccessibilityBridge.focusedWindowTitle()) -> String {
         guard !history.isEmpty, let bundleId else { return "" }
         let cutoff = Date().addingTimeInterval(-maxAge)
         // Browsers share one bundle id across tabs — when a host is known, only
@@ -177,6 +197,7 @@ final class ScreenContextProvider: ObservableObject {
         let matching = history.filter {
             $0.bundleId == bundleId && $0.time >= cutoff
                 && (host == nil || $0.host == nil || $0.host == host)
+                && (windowTitle == nil || $0.windowTitle == nil || $0.windowTitle == Self.stableTitle(windowTitle))
         }
         Log.shared.debug("screen context requested for bid=\(bundleId)\(host.map { " host=\($0)" } ?? ""), found \(matching.count) fresh entries out of \(history.count) total")
         guard var text = matching.last?.text else { return "" }

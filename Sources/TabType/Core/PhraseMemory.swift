@@ -1,4 +1,5 @@
 import Foundation
+import TabTypeKit
 
 /// Learns the user's own phrasing: maps 3-word prefixes from typing history to the
 /// words that followed them. When the user types a phrase they've typed before,
@@ -25,6 +26,7 @@ final class PhraseMemory {
 
     /// Fold one recorded snippet into the model.
     func ingest(_ text: String) {
+        let text = SecretSanitizer.sanitize(text)
         let words = Self.tokenize(text)
         guard words.count >= 4 else { return }
         for i in 0...(words.count - 4) {

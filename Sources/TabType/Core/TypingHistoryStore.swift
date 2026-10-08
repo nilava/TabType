@@ -1,4 +1,5 @@
 import Foundation
+import TabTypeKit
 import CryptoKit
 
 /// Local, encrypted store of typed/accepted text snippets, used only to build a
@@ -58,7 +59,7 @@ final class TypingHistoryStore: ObservableObject {
     /// without accepted completions" is on — a recent input string). Never the whole
     /// document; callers already pass short, bounded text.
     func record(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = SecretSanitizer.sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         entries.append(trimmed)
         if entries.count > maxEntries { entries.removeFirst(entries.count - maxEntries) }
@@ -104,8 +105,8 @@ final class TypingHistoryStore: ObservableObject {
     /// Record an accepted completion with its preceding text, for personal
     /// few-shot examples.
     func recordAccept(prefixTail: String, accepted: String) {
-        let p = prefixTail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let a = accepted.trimmingCharacters(in: .whitespacesAndNewlines)
+        let p = SecretSanitizer.sanitize(prefixTail).trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = SecretSanitizer.sanitize(accepted).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !p.isEmpty, !a.isEmpty else { return }
         accepts.append(AcceptPair(prefixTail: String(p.suffix(80)), accepted: String(a.prefix(80))))
         if accepts.count > maxAccepts { accepts.removeFirst(accepts.count - maxAccepts) }

@@ -39,11 +39,11 @@ final class DecoderBackend: CompletionBackend {
     private(set) var lastConfidence: Double?
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
-         template: ModelTemplate?, templateName: String, authorName: String?) {
+         template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false) {
         self.runtime = runtime
         self.options = options
         self.threshold = threshold
-        self.assembler = template.map { PromptAssembler(template: $0) }
+        self.assembler = template.map { PromptAssembler(template: $0, situationHeader: situationHeader) }
         self.authorName = authorName
         name = "llama-decoder/\(templateName)"
         model = URL(fileURLWithPath: runtime.modelPath).deletingPathExtension().lastPathComponent

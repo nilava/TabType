@@ -1,4 +1,5 @@
 import AppKit
+import TabTypeKit
 import ApplicationServices
 import Combine
 
@@ -82,7 +83,7 @@ final class Engine {
         guard text.count >= 4 else { return }
         var list = recentInputs[bundleId] ?? []
         if list.last != text {
-            list.append(String(text.suffix(300)))
+            list.append(SecretSanitizer.sanitize(String(text.suffix(300))))
             if list.count > 3 { list.removeFirst(list.count - 3) }
             recentInputs[bundleId] = list
         }
@@ -1329,6 +1330,8 @@ final class Engine {
             maxTokens: settings.maxTokens,
             temperature: settings.temperature)
         applyWriterContext(&req, appName: frontApp, policy: policy)
+        req.windowTitle = ctx.windowTitle
+        req.fieldPlaceholder = ctx.placeholder
         if !speculative { lastReq = req }   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
         if settings.verboseLog, !(engine is LlamaEngine) {

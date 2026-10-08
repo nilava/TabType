@@ -42,6 +42,8 @@ struct CompletionRequest {
     /// Frontmost app name, author name and raw custom instructions — the v2 prompt
     /// assembler frames these itself (v1 uses the pre-rendered `persona`).
     var appName: String = ""
+    var windowTitle: String = ""
+    var fieldPlaceholder: String = ""
     var authorName: String = ""
     var customInstructions: String = ""
     /// Display cap on the suggestion.

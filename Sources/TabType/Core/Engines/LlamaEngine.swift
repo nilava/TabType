@@ -23,7 +23,7 @@ final class LlamaEngine: SuggestionEngine {
 
     func complete(_ request: CompletionRequest) async -> String? {
         guard let template = models.template, var options = models.decoderOptions else { return nil }
-        let text = PromptAssembler(template: template).assemble(context(for: request))
+        let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
 
         // Warm-ups (`maxTokens <= 1`) only prefill the prompt into the cache.
         if request.maxTokens <= 1 {
@@ -51,14 +51,25 @@ final class LlamaEngine: SuggestionEngine {
     private func context(for request: CompletionRequest) -> PromptContext {
         var screen = request.screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
         if screen.isEmpty { screen = request.documentStart.trimmingCharacters(in: .whitespacesAndNewlines) }
+        screen = SecretSanitizer.sanitize(screen)
+        let clipboard = SecretSanitizer.sanitize(request.clipboard)
         let instructions = request.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
         return PromptContext(
-            typedText: request.beforeCursor,
+            typedText: Self.sanitizeEarlierLines(request.beforeCursor),
             appName: request.appName.isEmpty ? nil : request.appName,
+            windowTitle: request.windowTitle.isEmpty ? nil : request.windowTitle,
+            fieldPlaceholder: request.fieldPlaceholder.isEmpty ? nil : request.fieldPlaceholder,
             authorName: request.authorName.isEmpty ? nil : request.authorName,
             customInstructions: instructions.isEmpty ? nil : instructions,
             screenText: screen.isEmpty ? nil : screen,
             isConversation: request.screenIsConversation,
-            clipboard: request.clipboard.isEmpty ? nil : request.clipboard)
+            clipboard: clipboard.isEmpty ? nil : clipboard)
+    }
+
+    /// Scrubs secrets from earlier lines of the field but leaves the line being typed
+    /// exactly as is — it's what gets continued, and token healing needs its bytes.
+    static func sanitizeEarlierLines(_ text: String) -> String {
+        guard let newline = text.lastIndex(of: "\n") else { return text }
+        return SecretSanitizer.sanitize(String(text[...newline])) + text[text.index(after: newline)...]
     }
 }

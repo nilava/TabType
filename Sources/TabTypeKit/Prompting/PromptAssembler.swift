@@ -6,6 +6,8 @@ public struct PromptContext: Sendable, Equatable {
     public var typedText: String
     public var appName: String?
     public var windowTitle: String?
+    /// The field's placeholder ("Message Priya") — often names the recipient.
+    public var fieldPlaceholder: String?
     /// The writer's name (e.g. from the Mac account) — used as their speaker label
     /// in conversations and as "about me" context.
     public var authorName: String?
@@ -18,11 +20,13 @@ public struct PromptContext: Sendable, Equatable {
     public var clipboard: String?
 
     public init(typedText: String, appName: String? = nil, windowTitle: String? = nil,
-                authorName: String? = nil, customInstructions: String? = nil,
-                screenText: String? = nil, isConversation: Bool = false, clipboard: String? = nil) {
+                fieldPlaceholder: String? = nil, authorName: String? = nil,
+                customInstructions: String? = nil, screenText: String? = nil,
+                isConversation: Bool = false, clipboard: String? = nil) {
         self.typedText = typedText
         self.appName = appName
         self.windowTitle = windowTitle
+        self.fieldPlaceholder = fieldPlaceholder
         self.authorName = authorName
         self.customInstructions = customInstructions
         self.screenText = screenText
@@ -50,10 +54,15 @@ public struct PromptBudgets: Sendable, Equatable {
 public struct PromptAssembler: Sendable {
     public var template: ModelTemplate
     public var budgets: PromptBudgets
+    /// Base models only: open the document with a one-line "where am I" header
+    /// (app — window title — field placeholder).
+    public var situationHeader: Bool
 
-    public init(template: ModelTemplate, budgets: PromptBudgets = PromptBudgets()) {
+    public init(template: ModelTemplate, budgets: PromptBudgets = PromptBudgets(),
+                situationHeader: Bool = false) {
         self.template = template
         self.budgets = budgets
+        self.situationHeader = situationHeader
     }
 
     public func assemble(_ context: PromptContext) -> String {
@@ -67,6 +76,7 @@ public struct PromptAssembler: Sendable {
 
     private func assembleBase(_ c: PromptContext) -> String {
         var parts: [String] = []
+        if situationHeader, let header = situation(c) { parts.append(header) }
         if let notes = clean(c.customInstructions, limit: budgets.customInstructions) {
             parts.append("Notes about the writer: \(notes)")
         }
@@ -88,8 +98,7 @@ public struct PromptAssembler: Sendable {
 
     private func assembleChat(_ c: PromptContext) -> String {
         var user: [String] = []
-        let place = [c.appName, c.windowTitle].compactMap { $0?.isEmpty == false ? $0 : nil }
-        let whereText = place.isEmpty ? "" : " in \(place.joined(separator: " — "))"
+        let whereText = situation(c).map { " in \($0)" } ?? ""
         user.append("I'm typing a text\(whereText). Continue it exactly where it stops, as I would write it: "
                     + "same language, tone and formatting. Write only the continuation of my text — "
                     + "never answer it, comment on it, or address me.")
@@ -110,6 +119,19 @@ public struct PromptAssembler: Sendable {
     }
 
     // MARK: Sections
+
+    /// "Slack — #design-review — Message #design-review": app, window title and the
+    /// field placeholder, skipping parts that repeat what's already there.
+    private func situation(_ c: PromptContext) -> String? {
+        var parts: [String] = []
+        for value in [c.appName, c.windowTitle, c.fieldPlaceholder] {
+            guard let v = value.map(strip)?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty,
+                  !parts.contains(where: { $0.localizedCaseInsensitiveContains(v) || v.localizedCaseInsensitiveContains($0) })
+            else { continue }
+            parts.append(String(v.prefix(80)))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " — ")
+    }
 
     private func speaker(_ c: PromptContext) -> String {
         let first = c.authorName?.split(separator: " ").first.map(String.init)
