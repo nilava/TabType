@@ -107,6 +107,15 @@ final class AppSettings: ObservableObject {
     /// Local, encrypted typing-history collection for personalization (off by
     /// default — matches Cotypist's own default). Nothing collected here ever
     /// leaves the Mac; see `TypingHistoryStore`.
+    /// Labs (Cotypist's): the alternatives picker / synonyms for a selected word
+    /// appear by themselves after `labsDelay` seconds, not only on the shortcut.
+    @Published var alternativesAfterDelay: Bool {
+        didSet { defaults.set(alternativesAfterDelay, forKey: Keys.alternativesAfterDelay) }
+    }
+    @Published var synonymsAfterDelay: Bool {
+        didSet { defaults.set(synonymsAfterDelay, forKey: Keys.synonymsAfterDelay) }
+    }
+    @Published var labsDelay: Double { didSet { defaults.set(labsDelay, forKey: Keys.labsDelay) } }
     /// How strongly the author's own phrasing steers suggestions:
     /// "gentle" | "balanced" | "strong" (Cotypist's personalization strength).
     @Published var personalizationStrength: String {
@@ -178,6 +187,9 @@ final class AppSettings: ObservableObject {
         customInstructions = defaults.string(forKey: Keys.customInstructions) ?? ""
         collectTypingHistory = defaults.object(forKey: Keys.collectTypingHistory) as? Bool ?? false
         personalizationStrength = defaults.string(forKey: Keys.personalizationStrength) ?? "balanced"
+        alternativesAfterDelay = defaults.object(forKey: Keys.alternativesAfterDelay) as? Bool ?? false
+        synonymsAfterDelay = defaults.object(forKey: Keys.synonymsAfterDelay) as? Bool ?? false
+        labsDelay = defaults.object(forKey: Keys.labsDelay) as? Double ?? 1.5
         recordWithoutAccepts = defaults.object(forKey: Keys.recordWithoutAccepts) as? Bool ?? true
         disabledDomains = Set(defaults.stringArray(forKey: Keys.disabledDomains) ?? [])
         if let data = defaults.data(forKey: Keys.appOverrides),
@@ -252,6 +264,9 @@ final class AppSettings: ObservableObject {
         static let customInstructions = "customInstructions"
         static let collectTypingHistory = "collectTypingHistory"
         static let personalizationStrength = "personalizationStrength"
+        static let alternativesAfterDelay = "alternativesAfterDelay"
+        static let synonymsAfterDelay = "synonymsAfterDelay"
+        static let labsDelay = "labsDelay"
         static let recordWithoutAccepts = "recordWithoutAccepts"
         static let disabledDomains = "disabledDomains"
         static let appOverrides = "appOverrides"

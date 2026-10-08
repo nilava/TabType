@@ -394,6 +394,7 @@ final class Engine {
                 if let now, let before = self.observedFocus, CFEqual(now, before) { return }
                 self.observedFocus = now
                 self.lockedContext = nil
+                self.observeFocusedField()
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
                 self.dropPendingEdits()
@@ -1144,6 +1145,44 @@ final class Engine {
         return CGRect(x: caret.minX, y: caret.midY - usual.height / 2, width: caret.width, height: usual.height)
     }
 
+    // MARK: - Labs: pickers after a pause
+
+    private var labsTimer: DispatchWorkItem?
+
+    /// "Show alternative suggestions after a pause": the picker opens by itself
+    /// when the user leaves a suggestion up without typing.
+    private func scheduleAlternativesAfterPause(for suggestion: String) {
+        guard settings.alternativesAfterDelay else { return }
+        labsTimer?.cancel()
+        let typedAt = lastKeystrokeAt
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.currentSuggestion == suggestion, self.lastKeystrokeAt == typedAt,
+                  !self.alternatives.isActive else { return }
+            self.showWordAlternatives()
+        }
+        labsTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + settings.labsDelay, execute: work)
+    }
+
+    /// "Suggest synonyms for a selected word after a pause": the field reported a
+    /// selection change; offer synonyms if one word stays selected.
+    private func selectionChanged() {
+        guard settings.synonymsAfterDelay, let element = AccessibilityBridge.focusedElement(),
+              let selection = AccessibilityBridge.selection(of: element) else { return }
+        let word = selection.selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (2...40).contains(word.count), !word.contains(" "), !word.contains("\n") else { return }
+        labsTimer?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.alternatives.isActive,
+                  let el = AccessibilityBridge.focusedElement(),
+                  AccessibilityBridge.selection(of: el)?.selected.trimmingCharacters(in: .whitespacesAndNewlines) == word
+            else { return }
+            self.showWordAlternatives()
+        }
+        labsTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + settings.labsDelay, execute: work)
+    }
+
     /// Watch the focused field's own notifications (re-created when focus moves).
     private func observeFocusedField() {
         guard let element = AccessibilityBridge.focusedElement() else { fieldObserver = nil; return }
@@ -1151,7 +1190,10 @@ final class Engine {
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
         fieldObserver = AXFieldObserver(pid: pid, element: element) { [weak self] in
-            MainActor.assumeIsolated { self?.pendingPlacement?() }
+            MainActor.assumeIsolated {
+                self?.pendingPlacement?()
+                self?.selectionChanged()
+            }
         }
     }
 
@@ -1665,6 +1707,7 @@ final class Engine {
         // typing pause and reads the caret THEN (mid-burst reads are stale).
         presentWhenSettled(suggestion: suggestion, isNewSuggestion: true, allowWrap: allowWrap)
         startLookahead(after: suggestion, input: requestedInput, request: req)
+        scheduleAlternativesAfterPause(for: suggestion)
     }
 
     /// Compute the continuation of `input + suggestion` while `suggestion` is shown.

@@ -35,6 +35,19 @@ struct TextToolsPane: View {
 
     var body: some View {
         Form {
+            Section("Alternatives & synonyms (Labs)") {
+                Toggle("Show alternative suggestions after a pause", isOn: $settings.alternativesAfterDelay)
+                Toggle("Suggest synonyms for a selected word after a pause", isOn: $settings.synonymsAfterDelay)
+                HStack {
+                    Text("Delay")
+                    Slider(value: $settings.labsDelay, in: 0.5...4, step: 0.5)
+                    Text(String(format: "%.1f s", settings.labsDelay)).monospacedDigit()
+                        .foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                }
+                .disabled(!settings.alternativesAfterDelay && !settings.synonymsAfterDelay)
+                Text("Both are always available on the word-alternatives shortcut; these make them appear on their own.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Autocorrect") {
                 Toggle("Fix typos automatically", isOn: $settings.autocorrectEnabled)
                     .onChange(of: settings.autocorrectEnabled) { _, on in
