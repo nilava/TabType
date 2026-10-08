@@ -223,7 +223,6 @@ private struct KeyRecorder: NSViewRepresentable {
 /// Author name / voice / custom instructions that shape suggestions to sound like you.
 struct PersonalizationPane: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var showingDeleteConfirm = false
 
     var body: some View {
         Form {
@@ -232,26 +231,6 @@ struct PersonalizationPane: View {
                 Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")
                     .font(.caption).foregroundStyle(.secondary)
                 LearnedWritingRow()
-                Toggle("Store inputs without accepted completions", isOn: $settings.storeInputsWithoutAcceptedCompletions)
-                    .disabled(!settings.collectTypingHistory)
-                Text("When on, TabType stores everything it monitors, even when you don't accept a suggestion. When off, only text where you accepted a completion is stored.")
-                    .font(.caption).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Personalize word choice")
-                        Slider(value: $settings.personalizeWordChoice, in: 0...1, step: 0.05)
-                            .disabled(!settings.collectTypingHistory)
-                        Text(settings.personalizeWordChoice == 0 ? "Off" : String(format: "%.0f%%", settings.personalizeWordChoice * 100))
-                            .monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
-                    }
-                    Text("Uses your typing history to slightly favor the words and phrases you use often. Subtle at lower values; too high may occasionally suggest a less fitting word.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                // Kept in a subview so TypingHistoryStore.shared (which reads the
-                // Keychain on first touch) is only instantiated when data can exist.
-                if settings.collectTypingHistory || TypingHistoryStore.historyFileExists {
-                    HistoryDataRow(showingDeleteConfirm: $showingDeleteConfirm)
-                }
             }
             Section {
                 HStack {
@@ -282,29 +261,9 @@ struct PersonalizationPane: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog("Delete all collected typing history?", isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
-            Button("Delete All", role: .destructive) { TypingHistoryStore.shared.deleteAll() }
-            Button("Cancel", role: .cancel) {}
-        }
     }
 }
 
-/// Data row for the Personalization pane; owns the `@ObservedObject` so the
-/// store singleton (whose first touch reads the Keychain) is only created when
-/// this row is actually shown.
-private struct HistoryDataRow: View {
-    @ObservedObject var history = TypingHistoryStore.shared
-    @Binding var showingDeleteConfirm: Bool
-
-    var body: some View {
-        LabeledContent("Existing data") {
-            Button("Delete All…", role: .destructive) { showingDeleteConfirm = true }
-                .disabled(history.entryCount == 0)
-        }
-        Text(history.entryCount == 0 ? "No inputs have been collected yet." : "\(history.entryCount) snippet\(history.entryCount == 1 ? "" : "s") stored locally.")
-            .font(.caption).foregroundStyle(.secondary)
-    }
-}
 
 /// Emoji suggestions + customization.
 struct EmojiPane: View {
@@ -370,6 +329,10 @@ struct StatisticsPane: View {
                 LabeledContent("Suggestions shown", value: "\(stats.suggestionsShown)")
                 LabeledContent("Suggestions accepted", value: "\(stats.suggestionsAccepted)")
                 LabeledContent("Acceptance rate", value: percent(stats.acceptanceRate))
+                LabeledContent("Accepted one word / several words",
+                               value: "\(stats.singleWordAccepts) / \(stats.multiWordAccepts)")
+                LabeledContent("Response time (typical / slowest 5%)",
+                               value: stats.latencyPercentiles.map { "\($0.p50) ms / \($0.p95) ms" } ?? "—")
             }
             Section("Suggestion Funnel") {
                 LabeledContent("Show rate", value: percent(stats.showRate))

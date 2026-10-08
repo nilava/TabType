@@ -6,13 +6,13 @@ import SwiftUI
 /// first-run onboarding window, but stays available in Settings forever.
 struct SetupPane: View {
     @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var provider: ModelProvider
+    @EnvironmentObject var models: LlamaModelManager
 
     @State private var trusted = AccessibilityBridge.isTrusted()
     @State private var screenOK = ScreenContextProvider.shared.hasPermission()
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    private var modelReady: Bool { if case .ready = provider.state { return true } else { return false } }
+    private var modelReady: Bool { models.isLoaded }
     private var allSet: Bool { trusted && modelReady }
 
     var body: some View {
@@ -76,17 +76,17 @@ struct SetupPane: View {
 
     @ViewBuilder private var modelRow: some View {
         let (ok, statusText, buttonTitle): (Bool, String, String?) = {
-            switch provider.state {
-            case .ready: return (true, "Downloaded", nil)
-            case .downloading(_, let p): return (false, "Downloading \(Int(p * 100))%", nil)
-            case .finalizing: return (false, "Loading…", nil)
+            switch models.status {
+            case .ready: return (true, "Ready", nil)
+            case .downloading(_, let f): return (false, "Downloading \(Int(f * 100))%", nil)
+            case .loading: return (false, "Loading…", nil)
             case .failed: return (false, "Failed", "Retry")
-            case .idle: return (false, "Not downloaded", "Download")
+            case .noModel: return (false, "Not downloaded", "Download")
             }
         }()
         LabeledContent {
             if let buttonTitle {
-                Button(buttonTitle) { provider.load(modelId: settings.modelId) }
+                Button(buttonTitle) { models.select(models.selectedID) }
             } else {
                 statusPill(statusText, ok: ok)
             }

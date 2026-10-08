@@ -3,9 +3,8 @@
 #   ./Scripts/build.sh eval     — build the tabtype-eval quality harness (release)
 #   ./Scripts/build.sh app      — build TabType and bundle TabType.app into dist/
 #
-# The app requires full Xcode (MLX compiles Metal shaders; `swift build` cannot).
-# tabtype-eval only uses llama.cpp, whose Metal kernels are embedded, so plain
-# `swift build` is enough for it.
+# The app is built with xcodebuild (asset catalog); tabtype-eval needs only
+# `swift build`. llama.cpp ships its Metal kernels embedded in its framework.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,23 +50,11 @@ app)
         echo "WARNING: llama.framework not found in build products — the app will not launch." >&2
     fi
 
-    # SwiftPM resource bundles (emoji.json, tokenizer configs, …). These are found at
-    # runtime via `Bundle.module`, whose accessor searches Bundle.main.resourceURL
-    # (Contents/Resources) and the .app root — NOT Contents/MacOS. So they go in
-    # Contents/Resources. (MLX finds its Metal kernels via the colocated mlx.metallib
-    # below, independent of where its bundle lives.)
+    # SwiftPM resource bundles (emoji.json, model catalog, fonts, …). These are
+    # found at runtime via `Bundle.module`, whose accessor searches
+    # Bundle.main.resourceURL (Contents/Resources) and the .app root — NOT
+    # Contents/MacOS. So they go in Contents/Resources.
     find "$PRODUCTS" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
-
-    # MLX finds its Metal kernels by first looking for a *colocated* `mlx.metallib`
-    # next to the binary. The SwiftPM bundle's own lookup expects the bundle at the
-    # .app root, which breaks a normal Contents/MacOS layout — so copy the metallib
-    # to Contents/MacOS/mlx.metallib, which the colocated lookup resolves first.
-    METALLIB="$(find "$PRODUCTS" -name "default.metallib" | head -1)"
-    if [ -n "$METALLIB" ]; then
-        cp "$METALLIB" "$APP/Contents/MacOS/mlx.metallib"
-    else
-        echo "WARNING: default.metallib not found — GPU inference will fail." >&2
-    fi
 
     # Info.plist & Icon
     cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"

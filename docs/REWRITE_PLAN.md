@@ -323,9 +323,9 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 - [x] LoRA "voice" adapters: load/clear on the running model (cache reset), mismatch errors surfaced, Settings picker + folder; verified with a real Qwen3-0.6B adapter
 - [ ] Training adapters from recorded writing (separate project)
 
-### Phase 8 — Cutover
-- [ ] Remove MLX, swift-transformers, swift-jinja, Apple Intelligence engine
-- [ ] Delete superseded v1 files (§2 "Deleted")
-- [ ] Settings migration from v1 keys
-- [ ] Local latency telemetry + short/long accept stats in Statistics pane
-- [ ] README/COMPARISON update; release build via `Scripts/release.sh`
+### Phase 8 — Cutover ✅
+- [x] Remove MLX, swift-transformers, swift-jinja, Apple Intelligence engine (Package.swift has no remote dependencies)
+- [x] Delete superseded v1 files (§2 "Deleted")
+- [x] Settings migration from v1 keys (retired keys removed on launch)
+- [x] Local latency telemetry + short/long accept stats in Statistics pane
+- [x] README/COMPARISON update; `release.sh` now builds `CONFIG=Release` (Release build verified locally; versioning, DMG and tag left to the maintainer)

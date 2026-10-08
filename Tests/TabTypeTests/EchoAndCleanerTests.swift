@@ -3,38 +3,6 @@ import XCTest
 
 final class EchoAndCleanerTests: XCTestCase {
 
-    // MARK: - stripEcho
-
-    func testMidPrefixEchoRejected() {
-        // A long echo of the middle of the typed text is still rejected (≥4 words).
-        XCTAssertNil(Engine.stripEcho("how fast the autocomplete engine",
-                                      prefix: "testing how fast the autocomplete engine works"))
-    }
-
-    func testShortMidPrefixRepeatSurvives() {
-        // Re-using a short phrase from earlier text is normal writing, not an echo
-        // ("sounds good" said twice in one chat) — only the caret-adjacent suffix
-        // check treats short repeats as echoes.
-        XCTAssertNotNil(Engine.stripEcho("how fast the",
-                                         prefix: "testing how fast the autocomplete"))
-    }
-
-    func testSingleShortWordRepeatSurvives() {
-        // Repeating one short word from earlier text is a legitimate continuation.
-        XCTAssertNotNil(Engine.stripEcho("table",
-                                         prefix: "put it on the table and grab the other"))
-    }
-
-    func testSuffixEchoStillRejected() {
-        XCTAssertNil(Engine.stripEcho("fast the autocomplete",
-                                      prefix: "testing how fast the autocomplete"))
-    }
-
-    func testForwardContinuationSurvives() {
-        XCTAssertNotNil(Engine.stripEcho("engine feels today",
-                                         prefix: "testing how fast the autocomplete"))
-    }
-
     // MARK: - OCRCleaner
 
     func testTwoWordChromeLinesDropped() {

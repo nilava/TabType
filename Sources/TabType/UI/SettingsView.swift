@@ -5,7 +5,7 @@ struct SettingsView: View {
     enum Section: String, CaseIterable, Identifiable {
         case setup = "Setup"
         case general = "General"
-        case engine = "Engine & Model"
+        case engine = "Model"
         case context = "Context"
         case personalization = "Personalization"
         case textTools = "Text Tools"
@@ -185,177 +185,19 @@ struct GeneralSettingsView: View {
     }
 }
 
-// MARK: - Model manager
+// MARK: - Model
 
 struct ModelSettingsView: View {
-    @EnvironmentObject var settings: AppSettings
-    @EnvironmentObject var provider: ModelProvider
-    @State private var customId = ""
-    @State private var storageTick = 0   // bump to refresh installed sizes
-
     var body: some View {
         Form {
-            Section("Engine") {
-                Picker("Suggestions from", selection: $settings.engineChoice) {
-                    Text("Local model (recommended)").tag(EngineChoice.llama)
-                    Text("Local model — classic MLX engine").tag(EngineChoice.local)
-                    Text("Apple Intelligence").tag(EngineChoice.appleIntelligence)
-                    Text("Automatic").tag(EngineChoice.auto)
-                }
-                .pickerStyle(.radioGroup)
-                Label("The local model runs entirely on this Mac and never needs a network connection. It shows a suggestion only when it's confident, and completes half-typed words. The classic MLX engine is kept for comparison.",
+            Section {
+                Label("Suggestions come from a model that runs entirely on this Mac — nothing is sent anywhere. It shows a suggestion only when it's confident, and completes half-typed words.",
                       systemImage: "cpu")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(.secondary)
             }
-
-            if settings.engineChoice != .local {
-                LlamaModelSections()
-            } else {
-                classicModelSections
-            }
+            LlamaModelSections()
         }
         .formStyle(.grouped)
-    }
-
-    @ViewBuilder private var classicModelSections: some View {
-        Group {
-
-            Section("Local model") {
-                HStack {
-                    statusIcon
-                    Text(statusText).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer()
-                    if case .downloading(_, let p) = provider.state {
-                        ProgressView(value: p).frame(width: 120)
-                        Text("\(Int(p * 100))%").font(.caption).foregroundStyle(.secondary)
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                    if case .finalizing = provider.state {
-                        ProgressView().controlSize(.small)
-                    }
-                    if case .failed(let modelId, _) = provider.state {
-                        Button("Retry") { provider.retry(modelId: modelId) }
-                    }
-                }
-                if case .failed(_, let message) = provider.state {
-                    Text(message).font(.caption).foregroundStyle(.red)
-                }
-            }
-
-            Section {
-                ForEach(ModelCatalog.recommended) { model in modelRow(model) }
-            } header: {
-                Text("Recommended")
-            } footer: {
-                Text("Recommended for this Mac: \(HardwareInfo.recommendationReason).")
-                    .font(.caption)
-            }
-
-            Section {
-                ForEach(ModelCatalog.other) { model in modelRow(model) }
-            } header: {
-                Text("Other Models")
-            } footer: {
-                Text("Instruct models continue text well but may occasionally reply instead of continuing it. Models on disk: \(ModelStorage.formatted(ModelStorage.totalUsed())).")
-                    .font(.caption)
-                    .id(storageTick)
-            }
-
-            Section("Custom Hugging Face model") {
-                HStack {
-                    TextField("mlx-community/…", text: $customId)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Load") { select(customId) }
-                        .disabled(customId.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                Text("Any MLX-format text model from Hugging Face.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("Storage") {
-                LabeledContent("Model files") {
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting(
-                            [ModelStorage.revealDir(for: settings.modelId)])
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var statusIcon: some View {
-        switch provider.state {
-        case .ready: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-        case .downloading: Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
-        case .finalizing: Image(systemName: "gearshape.2").foregroundStyle(.secondary)
-        case .idle: Image(systemName: "circle.dashed").foregroundStyle(.secondary)
-        }
-    }
-
-    private var statusText: String {
-        switch provider.state {
-        case .idle: return "Idle"
-        case .downloading(let modelId, _): return "Downloading \(modelId.split(separator: "/").last.map(String.init) ?? modelId)…"
-        case .finalizing(let modelId): return "Loading \(modelId.split(separator: "/").last.map(String.init) ?? modelId) into memory…"
-        case .ready(let id): return id
-        case .failed(let modelId, _): return "Failed: \(modelId.split(separator: "/").last.map(String.init) ?? modelId)"
-        }
-    }
-
-    private func installed(_ id: String) -> Bool {
-        _ = storageTick   // re-evaluate when storage changes
-        return ModelStorage.isInstalled(id)
-    }
-
-    @ViewBuilder
-    private func modelRow(_ model: CatalogModel) -> some View {
-        Button { select(model.id) } label: {
-            HStack(spacing: 12) {
-                Image(systemName: settings.modelId == model.id
-                      ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(settings.modelId == model.id ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(model.name).fontWeight(.medium)
-                        if ModelCatalog.isRecommended(model.id) {
-                            Text("Best for you")
-                                .font(.caption2).fontWeight(.semibold)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        if installed(model.id) {
-                            Text("Installed · \(ModelStorage.formatted(ModelStorage.size(model.id)))")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
-                        }
-                    }
-                    Text("\(model.approxSize) · \(model.note)")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if installed(model.id) {
-                    Button {
-                        ModelStorage.delete(model.id)
-                        storageTick += 1
-                    } label: { Image(systemName: "trash").foregroundStyle(.secondary) }
-                    .buttonStyle(.borderless)
-                    .help("Delete downloaded files")
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func select(_ id: String) {
-        let trimmed = id.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        // Don't persist settings.modelId yet — ModelProvider only reports it via
-        // onReady once the download/load actually succeeds, so a failed switch never
-        // leaves settings pointing at a model that isn't actually loaded.
-        provider.load(modelId: trimmed)
     }
 }
 
@@ -730,18 +572,7 @@ struct AdvancedSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Generation") {
-                HStack {
-                    Text("Creativity (temperature)")
-                    Slider(value: $settings.temperature, in: 0.0...1.0, step: 0.05)
-                    Text(String(format: "%.2f", settings.temperature)).monospacedDigit()
-                        .foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                }
-                Stepper(value: $settings.maxTokens, in: 6...48, step: 2) {
-                    LabeledContent("Max tokens generated", value: "\(settings.maxTokens)")
-                }
-                Text("A hard ceiling on generation length — General's \"Completion length\" already controls the typical suggestion length you'll see; you usually don't need to change this.")
-                    .font(.caption).foregroundStyle(.secondary)
+            Section("Context") {
                 HStack {
                     Text("Context window")
                     Slider(value: Binding(
@@ -750,6 +581,8 @@ struct AdvancedSettingsView: View {
                     Text("\(settings.contextChars)").monospacedDigit()
                         .foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
                 }
+                Text("How much of the text before the cursor is read, in characters.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Diagnostics") {
                 Toggle("Verbose logging", isOn: $settings.verboseLog)
@@ -764,8 +597,6 @@ struct AdvancedSettingsView: View {
             }
             Section {
                 Button("Reset to Defaults", role: .destructive) {
-                    settings.temperature = 0.1
-                    settings.maxTokens = 28
                     settings.contextChars = 1200
                     settings.verboseLog = false
                 }

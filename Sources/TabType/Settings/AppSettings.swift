@@ -26,8 +26,6 @@ final class AppSettings: ObservableObject {
     /// matching Cotypist's continuous-suggestion feel. Uses more CPU while actively
     /// typing. See `batteryUseDebounce` for the automatic battery fallback.
     @Published var continuousGeneration: Bool { didSet { defaults.set(continuousGeneration, forKey: Keys.continuousGeneration) } }
-    /// Max tokens to generate per suggestion (generation cap).
-    @Published var maxTokens: Int { didSet { defaults.set(maxTokens, forKey: Keys.maxTokens) } }
     /// Max words shown per suggestion (display cap — the main "length" knob).
     @Published var maxWords: Int { didSet { defaults.set(maxWords, forKey: Keys.maxWords) } }
     /// Accept the whole suggestion on Tab (true) or one word at a time (false).
@@ -35,11 +33,6 @@ final class AppSettings: ObservableObject {
     /// Ghost-text opacity, 0.15–1.0.
     @Published var ghostOpacity: Double { didSet { defaults.set(ghostOpacity, forKey: Keys.ghostOpacity) } }
 
-    // MARK: Engine & Model
-    @Published var engineChoice: EngineChoice {
-        didSet { defaults.set(engineChoice.rawValue, forKey: Keys.engineChoice) }
-    }
-    @Published var modelId: String { didSet { defaults.set(modelId, forKey: Keys.modelId) } }
 
     // MARK: Shortcuts
     @Published var acceptWordKey: KeyBinding { didSet { saveBinding(acceptWordKey, Keys.acceptWordKey) } }
@@ -75,7 +68,6 @@ final class AppSettings: ObservableObject {
     @Published var autocorrectLanguage: String { didSet { defaults.set(autocorrectLanguage, forKey: Keys.autocorrectLanguage) } }
 
     // MARK: Advanced
-    @Published var temperature: Double { didSet { defaults.set(temperature, forKey: Keys.temperature) } }
     /// How many characters of preceding context to send to the model.
     @Published var contextChars: Int { didSet { defaults.set(contextChars, forKey: Keys.contextChars) } }
     /// Read the surrounding on-screen conversation (chat transcripts) as context.
@@ -119,16 +111,6 @@ final class AppSettings: ObservableObject {
     @Published var collectTypingHistory: Bool {
         didSet { defaults.set(collectTypingHistory, forKey: Keys.collectTypingHistory) }
     }
-    /// When on, every input TabType monitors is stored, not just ones where a
-    /// suggestion was accepted — builds a richer dataset once collection is on.
-    @Published var storeInputsWithoutAcceptedCompletions: Bool {
-        didSet { defaults.set(storeInputsWithoutAcceptedCompletions, forKey: Keys.storeInputsWithoutAcceptedCompletions) }
-    }
-    /// 0 (off) ... 1 (max): how much stored typing history nudges word choice toward
-    /// words you use often. Subtle at low values.
-    @Published var personalizeWordChoice: Double {
-        didSet { defaults.set(personalizeWordChoice, forKey: Keys.personalizeWordChoice) }
-    }
 
     /// Browser domains where suggestions are disabled (bare hosts, e.g. "mail.google.com").
     @Published var disabledDomains: Set<String> { didSet { defaults.set(Array(disabledDomains), forKey: Keys.disabledDomains) } }
@@ -143,29 +125,6 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    /// A short persona preface composed from personalization settings (may be empty).
-    var personaPreface: String {
-        var parts: [String] = []
-        let name = authorName.trimmingCharacters(in: .whitespaces)
-        let style = writingStyle.trimmingCharacters(in: .whitespaces)
-        let notes = customInstructions.trimmingCharacters(in: .whitespaces)
-        if !name.isEmpty { parts.append("The writer is \(name).") }
-        if !style.isEmpty { parts.append("Writing style: \(style).") }
-        if !notes.isEmpty { parts.append(notes) }
-        if collectTypingHistory, personalizeWordChoice > 0 {
-            // Subtle at low slider values, more pronounced near the top — a short
-            // list of frequently-used words nudges the model's word choice without
-            // any deep sampling/logit changes.
-            let limit = max(0, Int(personalizeWordChoice * 12))
-            let words = TypingHistoryStore.shared.topWords(limit: limit)
-            // A 1-2 word "hint" is pure steering noise for a small model — only
-            // include the sentence once there's a real signal.
-            if words.count >= 3 {
-                parts.append("Words this person uses often: \(words.joined(separator: ", ")).")
-            }
-        }
-        return parts.joined(separator: " ")
-    }
     /// Write verbose diagnostics to the log file.
     @Published var verboseLog: Bool {
         didSet {
@@ -180,45 +139,13 @@ final class AppSettings: ObservableObject {
         isEnabled = defaults.object(forKey: Keys.isEnabled) as? Bool ?? true
         debounceMs = defaults.object(forKey: Keys.debounceMs) as? Int ?? 90
         continuousGeneration = defaults.object(forKey: Keys.continuousGeneration) as? Bool ?? true
-        // 40 tokens: headroom for a 14-word "long" completion without mid-word
-        // truncation on Qwen's tokenizer. Cheap since generation now stops at the
-        // first newline / word-cap (see Predictor's didGenerate); SuggestionTrimmer
-        // bounds the visible length anyway.
-        var storedMaxTokens = defaults.object(forKey: Keys.maxTokens) as? Int ?? 40
-        if storedMaxTokens == 28 {   // migrate the old default now that stops exist
-            storedMaxTokens = 40
-            defaults.set(storedMaxTokens, forKey: Keys.maxTokens)
-        }
-        maxTokens = storedMaxTokens
         maxWords = defaults.object(forKey: Keys.maxWords) as? Int ?? 8
         acceptWholeLine = defaults.object(forKey: Keys.acceptWholeLine) as? Bool ?? false
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
-        // Local model is the default (matches Cotypist's own architecture — it never
-        // uses Apple Intelligence, confirmed by inspecting its installed binary).
-        // Apple Intelligence remains available as an explicit alternate choice.
-        // v2 (llama.cpp) is the default; people on the v1 local engine move over once.
-        var choice = EngineChoice(rawValue: defaults.string(forKey: Keys.engineChoice) ?? "") ?? .llama
-        if choice == .local, !defaults.bool(forKey: Keys.migratedToLlama) {
-            choice = .llama
-            defaults.set(choice.rawValue, forKey: Keys.engineChoice)
-        }
-        defaults.set(true, forKey: Keys.migratedToLlama)
-        engineChoice = choice
-        // Default to the model recommended for this Mac's hardware until the user
-        // explicitly picks one.
-        modelId = defaults.string(forKey: Keys.modelId) ?? HardwareInfo.recommendedModelId
-        // 0 = greedy ArgMax decoding: deterministic (same prompt → same suggestion)
-        // and marginally faster. MLX only uses ArgMax at exactly 0 — 0.1 still
-        // SAMPLES, which fed occasional low-probability first tokens straight into
-        // the rejection filters.
-        var storedTemperature = defaults.object(forKey: Keys.temperature) as? Double ?? 0.0
-        if storedTemperature == 0.1 {   // migrate the old default
-            storedTemperature = 0.0
-            defaults.set(storedTemperature, forKey: Keys.temperature)
-        }
-        temperature = storedTemperature
-        // Must stay ≤ the PromptBuilder cap (6000) minus its reserve, or the prefix
-        // gets re-truncated and context sections starve.
+        // Settings that only the removed v1 (MLX / Apple Intelligence) engine used.
+        for key in Keys.retiredV1 { defaults.removeObject(forKey: key) }
+        // How much typed text (before the caret) is read; the prompt assembler
+        // budgets it further.
         contextChars = defaults.object(forKey: Keys.contextChars) as? Int ?? 1200
         // Default OFF: OCR of the focused window repeatedly bled unrelated on-screen
         // text (plans, docs, code) into suggestions. Opt-in for those who want it.
@@ -239,8 +166,6 @@ final class AppSettings: ObservableObject {
         writingStyle = defaults.string(forKey: Keys.writingStyle) ?? ""
         customInstructions = defaults.string(forKey: Keys.customInstructions) ?? ""
         collectTypingHistory = defaults.object(forKey: Keys.collectTypingHistory) as? Bool ?? false
-        storeInputsWithoutAcceptedCompletions = defaults.object(forKey: Keys.storeInputsWithoutAcceptedCompletions) as? Bool ?? true
-        personalizeWordChoice = defaults.object(forKey: Keys.personalizeWordChoice) as? Double ?? 0
         disabledDomains = Set(defaults.stringArray(forKey: Keys.disabledDomains) ?? [])
         if let data = defaults.data(forKey: Keys.appOverrides),
            let decoded = try? JSONDecoder().decode([String: AppOverride].self, from: data) {
@@ -295,14 +220,12 @@ final class AppSettings: ObservableObject {
         static let isEnabled = "isEnabled"
         static let debounceMs = "debounceMs"
         static let continuousGeneration = "continuousGeneration"
-        static let maxTokens = "maxTokens"
         static let maxWords = "maxWords"
+        /// Keys of settings that only the removed v1 engine used — deleted on launch.
+        static let retiredV1 = ["maxTokens", "engineChoice", "migratedToLlamaEngine", "modelId", "temperature",
+                                "storeInputsWithoutAcceptedCompletions", "personalizeWordChoice"]
         static let acceptWholeLine = "acceptWholeLine"
         static let ghostOpacity = "ghostOpacity"
-        static let engineChoice = "engineChoice"
-        static let migratedToLlama = "migratedToLlamaEngine"
-        static let modelId = "modelId"
-        static let temperature = "temperature"
         static let contextChars = "contextChars"
         static let useScreenContext = "useScreenContext"
         static let screenCropMode = "screenCropMode"
@@ -318,8 +241,6 @@ final class AppSettings: ObservableObject {
         static let writingStyle = "writingStyle"
         static let customInstructions = "customInstructions"
         static let collectTypingHistory = "collectTypingHistory"
-        static let storeInputsWithoutAcceptedCompletions = "storeInputsWithoutAcceptedCompletions"
-        static let personalizeWordChoice = "personalizeWordChoice"
         static let disabledDomains = "disabledDomains"
         static let appOverrides = "appOverrides"
         static let verboseLog = "verboseLog"

@@ -1,14 +1,13 @@
 import Foundation
 import TabTypeKit
 
-/// The v2 engine: llama.cpp + the confidence-scored decoder. Its output is the exact
-/// text to insert (the typed partial word is already healed and spacing resolved),
-/// so `Engine` must not run v1's echo/assistant-speak/mid-word repair on it.
+/// The suggestion engine: llama.cpp + the confidence-scored decoder. Its output is
+/// the exact text to insert (the typed partial word is already healed and spacing
+/// resolved).
 @MainActor
-final class LlamaEngine: SuggestionEngine {
+final class LlamaEngine {
     let displayName = "Local model"
     let models: LlamaModelManager
-    var onLateSuggestion: ((String, CompletionRequest) -> Void)?
 
     /// The most recent shown-or-gated result, for the word picker's alternatives.
     private(set) var lastResult: TabTypeKit.CompletionResult?
@@ -25,8 +24,8 @@ final class LlamaEngine: SuggestionEngine {
         guard let template = models.template, var options = models.decoderOptions else { return nil }
         let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
 
-        // Warm-ups (`maxTokens <= 1`) only prefill the prompt into the cache.
-        if request.maxTokens <= 1 {
+        // Warm-ups only prefill the prompt into the cache.
+        if request.warmUpOnly {
             try? await models.inference.warmUp(text)
             return nil
         }
@@ -54,6 +53,7 @@ final class LlamaEngine: SuggestionEngine {
             Statistics.shared.record(.belowConfidence)
             return nil
         }
+        Statistics.shared.recordLatency(ms: ms)
         Log.shared.debug("v2: \"\(result.text)\" conf \(String(format: "%.2f", result.confidence))\(result.followsHint ? " · from your writing" : "") · \(result.promptTokens) prompt tokens · \(ms)ms")
         return result.text
     }
@@ -62,8 +62,7 @@ final class LlamaEngine: SuggestionEngine {
     /// picker's synonyms for a selection. `base` supplies the screen/app context.
     func synonyms(for word: String, before: String, after: String, base: CompletionRequest?) async -> [String] {
         guard let template = models.template else { return [] }
-        var request = base ?? CompletionRequest(beforeCursor: before, afterCursor: "", screenContext: "",
-                                                maxWords: 1, maxTokens: 8, temperature: 0)
+        var request = base ?? CompletionRequest(beforeCursor: before, afterCursor: "", screenContext: "", maxWords: 1)
         request.beforeCursor = before
         let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
         let id = models.inference.beginRequest()

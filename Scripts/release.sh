@@ -29,7 +29,7 @@ plutil -replace CFBundleVersion -string "$NEXT_BUILD" "$PLIST"
 echo "Version $VERSION (build $NEXT_BUILD)"
 
 # 2) Build the bundle.
-./Scripts/build.sh app
+CONFIG=Release ./Scripts/build.sh app
 
 # 3) Refuse to ship an ad-hoc build (would reset user permissions each update).
 SIGINFO="$(codesign -dvv "$APP" 2>&1 || true)"

@@ -205,21 +205,6 @@ final class ScreenContextProvider: ObservableObject {
         return text
     }
 
-    /// The freshest snippet from a DIFFERENT app (or a different site in the same
-    /// browser) within `maxAgeSecs` — labeled previous-app background for the
-    /// prompt, so it never masquerades as current context.
-    func previousAppSnippet(excludingBundleId bundleId: String?, host: String?,
-                            cap: Int = 250, maxAgeSecs: TimeInterval = 60) -> (app: String, text: String)? {
-        let cutoff = Date().addingTimeInterval(-maxAgeSecs)
-        let candidate = history.last {
-            $0.time >= cutoff && ($0.bundleId != bundleId
-                || (host != nil && $0.host != nil && $0.host != host))
-        }
-        guard let candidate else { return nil }
-        let name = candidate.host ?? candidate.app
-        return (name, String(candidate.text.suffix(cap)))
-    }
-
     /// One-shot diagnostic: capture the frontmost window, OCR it, and log the result
     /// at info level so we can confirm the capture+OCR pipeline works on this machine.
     func selfTest() {

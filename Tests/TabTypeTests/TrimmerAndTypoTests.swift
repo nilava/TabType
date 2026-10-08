@@ -3,50 +3,6 @@ import XCTest
 
 final class TrimmerAndTypoTests: XCTestCase {
 
-    func testReplyOpenersRejectedOnlyAfterFinishedSentence() {
-        // After "?" the author finished a sentence — "I'll check" is the model
-        // ANSWERING the conversation, not the author's continuation.
-        XCTAssertNil(Engine.stripAssistantSpeak("I'll check and get back to you",
-                                                inputTail: "call later today?"))
-        XCTAssertNil(Engine.stripAssistantSpeak("Let me know what you think",
-                                                inputTail: "amazing news!"))
-        // Mid-sentence, the same openers are legitimate continuations.
-        XCTAssertNotNil(Engine.stripAssistantSpeak("I'll be there by noon",
-                                                   inputTail: "and after that"))
-        XCTAssertNotNil(Engine.stripAssistantSpeak("we can ship on Friday",
-                                                   inputTail: "if the tests pass then"))
-        // The unconditional assistant-isms stay rejected regardless of tail.
-        XCTAssertNil(Engine.stripAssistantSpeak("As an AI, I cannot do that",
-                                                inputTail: "and after that"))
-    }
-
-    // MARK: - SuggestionTrimmer terminator rule
-
-    func testCutsAtRealSentenceEnd() {
-        XCTAssertEqual(SuggestionTrimmer.trim("done with review. We should move on", maxWords: 14),
-                       "done with review.")
-    }
-
-    func testAbbreviationSurvives() {
-        XCTAssertEqual(SuggestionTrimmer.trim("e.g. the plan works fine", maxWords: 14),
-                       "e.g. the plan works fine")
-    }
-
-    func testDecimalSurvives() {
-        XCTAssertEqual(SuggestionTrimmer.trim("version 2.5 of the app", maxWords: 14),
-                       "version 2.5 of the app")
-    }
-
-    func testTerminatorAtEndKept() {
-        XCTAssertEqual(SuggestionTrimmer.trim("that works for me.", maxWords: 14),
-                       "that works for me.")
-    }
-
-    func testWordCapStillApplies() {
-        XCTAssertEqual(SuggestionTrimmer.trim("one two three four five six seven eight nine ten", maxWords: 8),
-                       "one two three four five six seven eight")
-    }
-
     // MARK: - Engine.typoCheckToken
 
     func testMidWordPartialExtracted() {
@@ -66,34 +22,6 @@ final class TrimmerAndTypoTests: XCTestCase {
     }
 
     // MARK: - Engine.stripPartialOverlap
-
-    func testWholeWordSuggestionStripped() {
-        XCTAssertEqual(Engine.stripPartialOverlap(suggestion: "test", partial: "te", fragment: "test"),
-                       "st")
-    }
-
-    func testWholeWordPlusContinuationStripped() {
-        XCTAssertEqual(Engine.stripPartialOverlap(suggestion: "testing again now", partial: "te", fragment: "testing"),
-                       "sting again now")
-    }
-
-    func testPureEchoOfPartialBecomesEmpty() {
-        XCTAssertEqual(Engine.stripPartialOverlap(suggestion: "te", partial: "te", fragment: "te"), "")
-    }
-
-    func testEchoedWordWithContinuationKeepsRest() {
-        XCTAssertEqual(Engine.stripPartialOverlap(suggestion: "te and more", partial: "te", fragment: "te"),
-                       " and more")
-    }
-
-    func testGenuineMidWordContinuationUntouched() {
-        XCTAssertNil(Engine.stripPartialOverlap(suggestion: "st case", partial: "te", fragment: "st"))
-    }
-
-    func testShortPartialNotStripped() {
-        // 1-char partials are too ambiguous to strip ("a" prefixes half the dictionary).
-        XCTAssertNil(Engine.stripPartialOverlap(suggestion: "and then", partial: "a", fragment: "and"))
-    }
 
     // MARK: - MacroEngine.couldMatch
 

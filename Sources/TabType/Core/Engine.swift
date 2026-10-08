@@ -9,7 +9,6 @@ import Combine
 @MainActor
 final class Engine {
     private let settings: AppSettings
-    private let provider: ModelProvider
     private let router: EngineRouter
     private let monitor = KeystrokeMonitor()
     private let overlay = SuggestionOverlay()
@@ -136,10 +135,9 @@ final class Engine {
 
     private(set) var isRunning = false
 
-    init(settings: AppSettings = .shared, provider: ModelProvider = .shared) {
+    init(settings: AppSettings = .shared) {
         self.settings = settings
-        self.provider = provider
-        self.router = EngineRouter(settings: settings, provider: provider)
+        self.router = EngineRouter()
         self.inlineCommand = InlineCommandController(settings: settings)
     }
 
@@ -156,10 +154,6 @@ final class Engine {
         // as stale so it never enters a prompt (only copies made from now on do).
         clipboardChangeCount = NSPasteboard.general.changeCount
         clipboardFirstSeen = .distantPast
-        // Personal phrase memory: learn the user's recurring phrases from history.
-        if settings.collectTypingHistory {
-            PhraseMemory.shared.rebuild(from: TypingHistoryStore.shared.allEntries)
-        }
         isRunning = true
         return true
     }
@@ -340,26 +334,11 @@ final class Engine {
             let key = (bid ?? "") + "|" + String(screen.hashValue)
             guard key != self.lastPrewarmKey else { return }   // context unchanged
             self.lastPrewarmKey = key
-            let personalExamples: [TypingHistoryStore.AcceptPair] =
-                (self.settings.collectTypingHistory && TypingHistoryStore.shared.acceptCount >= 5)
-                ? TypingHistoryStore.shared.recentAccepts(limit: 2) : []
-            let previousWriting: [String] = self.settings.collectTypingHistory
-                ? TypingHistoryStore.shared.contextSamples(budget: 350) : []
-            let recentMessages = bid.flatMap { self.recentInputs[$0] } ?? []
-            let persona = policy.customInstructions.isEmpty
-                ? self.settings.personaPreface
-                : self.settings.personaPreface + " " + policy.customInstructions
             var req = CompletionRequest(
                 beforeCursor: "Hello", afterCursor: "",
                 screenContext: screen,
                 clipboard: self.settings.useClipboardContext ? self.freshClipboardText() : "",
-                persona: persona,
-                personalExamples: personalExamples,
-                previousWriting: previousWriting,
-                recentMessages: recentMessages,
-                speculative: true,
-                screenContextBudget: screenCap,
-                maxWords: 1, maxTokens: 1, temperature: 0.0)
+                speculative: true, maxWords: 1, warmUpOnly: true)
             req.screenIsConversation = policy.transcriptViaAX
             self.applyWriterContext(&req, appName: NSWorkspace.shared.frontmostApplication?.localizedName,
                                     policy: policy)
@@ -375,7 +354,8 @@ final class Engine {
     /// regeneration that streams in when ready.
     private func showWordAlternatives() {
         // A selected word: offer words that fit in its place instead.
-        if let llama = router.current as? LlamaEngine, let element = AccessibilityBridge.focusedElement(),
+        let llama = router.current
+        if let element = AccessibilityBridge.focusedElement(),
            let selection = AccessibilityBridge.selection(of: element) {
             let word = selection.selected.trimmingCharacters(in: .whitespacesAndNewlines)
             if !word.isEmpty, !word.contains("\n"), word.split(separator: " ").count <= 3 {
@@ -392,12 +372,11 @@ final class Engine {
            let first = suggestion.split(whereSeparator: { $0 == " " || $0 == "\n" }).first {
             initial.append(String(first))
         }
-        if let v2 = router.current as? LlamaEngine, let result = v2.lastResult {
+        if let result = router.current.lastResult {
             // The decoder's runner-up first words, already scored against the context.
             initial += result.alternatives.map { $0.text.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty && !initial.contains($0) }
         }
-        initial += PhraseMemory.shared.alternatives(after: buffer, limit: 2)
         guard !initial.isEmpty || lastReq != nil else { return }
         alternatives.show(candidates: initial.isEmpty ? ["…"] : initial, caretRect: caretRect)
         let gen = alternatives.currentGeneration
@@ -412,21 +391,6 @@ final class Engine {
                     self.alternatives.addCandidate(String(word.dropFirst(partial.count)),
                                                    forGeneration: gen, caretRect: caretRect)
                 }
-            }
-        }
-        // One higher-temperature regeneration for a genuinely different option
-        // (v1 only: the v2 decoder is deterministic and already supplied its
-        // scored alternatives above).
-        if var req = lastReq, !(router.current is LlamaEngine) {
-            req.temperature = 0.7
-            req.maxTokens = 8
-            req.maxWords = 2
-            Task { [weak self] in
-                guard let self else { return }
-                guard let raw = await self.router.current.complete(req),
-                      let first = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                          .split(whereSeparator: { $0 == " " || $0 == "\n" }).first else { return }
-                self.alternatives.addCandidate(String(first), forGeneration: gen, caretRect: caretRect)
             }
         }
     }
@@ -473,7 +437,6 @@ final class Engine {
         let toInsert = word + (settings.includeTrailingSpace ? " " : "")
         buffer += toInsert
         Statistics.shared.recordAccepted(wordCount: 1)
-        if settings.collectTypingHistory { TypingHistoryStore.shared.record(toInsert) }
         let strategy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
             .insertionStrategy
         let baselineLen = AccessibilityBridge.focusedElement()
@@ -490,14 +453,8 @@ final class Engine {
     /// Warm the model's KV prefix cache with the static prompt head (system prompt
     /// + chat template + persona) so the first real suggestion skips that prefill.
     func warmUpModel() {
-        let personalExamples: [TypingHistoryStore.AcceptPair] =
-            (settings.collectTypingHistory && TypingHistoryStore.shared.acceptCount >= 5)
-            ? TypingHistoryStore.shared.recentAccepts(limit: 2) : []
-        var req = CompletionRequest(
-            beforeCursor: "Hello", afterCursor: "", screenContext: "", clipboard: "",
-            persona: settings.personaPreface, personalExamples: personalExamples,
-            previousWriting: [], speculative: true,
-            maxWords: 1, maxTokens: 1, temperature: 0.0)
+        var req = CompletionRequest(beforeCursor: "Hello", afterCursor: "", screenContext: "",
+                                    speculative: true, maxWords: 1, warmUpOnly: true)
         applyWriterContext(&req, appName: nil, policy: AppPolicyStore.policy(forBundleId: nil))
         Task { [weak self] in
             guard let self else { return }
@@ -582,9 +539,6 @@ final class Engine {
         }
         monitor.handleControlKey = { keyCode, flags in
             MainActor.assumeIsolated { self.handleControlKey(keyCode: keyCode, flags: flags) }
-        }
-        router.onLateSuggestion = { [weak self] raw, req in
-            self?.handleLateSuggestion(raw: raw, req: req)
         }
     }
 
@@ -791,58 +745,6 @@ final class Engine {
             .flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
 
         schedulePrediction()
-        maybeShowInstantWordCompletion(isDeletion: isDeletion)
-    }
-
-    /// Sombra-style zero-latency layer: complete the current WORD from the frequency
-    /// dictionary immediately (microseconds, no GPU) while the LLM works on the
-    /// phrase continuation. The LLM result replaces this ghost when it lands.
-    /// At word boundaries, the personal phrase memory gets first shot: recurring
-    /// phrases from the user's own history beat the model for names/sign-offs/jargon.
-    private func maybeShowInstantWordCompletion(isDeletion: Bool) {
-        guard !isDeletion, currentSuggestion == nil else { return }
-        // The v2 decoder completes partial words itself (token healing) within
-        // ~50-100ms; a dictionary ghost first would only flicker and disagree.
-        guard !(router.current is LlamaEngine) else { return }
-        // Same credential gate as the model path — the dictionary layer was
-        // happily completing "co" → "company" inside email fields.
-        if let f = AccessibilityBridge.focusedElement(),
-           AccessibilityBridge.isSecureField(f) || AccessibilityBridge.isCredentialField(f) {
-            return
-        }
-
-        // Word boundary → the user's own recurring phrases, remembered verbatim.
-        if settings.collectTypingHistory, let last = buffer.last, last == " " {
-            if let phrase = PhraseMemory.shared.continuation(after: String(buffer.dropLast())) {
-                Log.shared.debug("predict -> \"\(phrase)\" [phrase memory] (0ms)")
-                presentWhenSettled(suggestion: phrase, isNewSuggestion: true)
-                return
-            }
-        }
-
-        guard let last = buffer.last, last.isLetter else { return }
-        // Mid-email ("…@lodhagroup.co" → "company") is never a wanted completion.
-        if let lastWord = buffer.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
-           let at = lastWord.firstIndex(of: "@"), at != lastWord.startIndex,
-           lastWord.index(after: at) != lastWord.endIndex {
-            return
-        }
-        let partial = String(buffer.reversed().prefix { $0.isLetter }.reversed())
-        guard partial.count >= 3 else { return }
-        let token = scheduleToken
-        Task { [weak self] in
-            guard let self else { return }
-            guard let word = await SpellChecker.shared.completion(
-                for: partial, language: self.settings.autocorrectLanguage) else { return }
-            // Stale if another keystroke happened or the LLM already presented.
-            guard token == self.scheduleToken, self.currentSuggestion == nil,
-                  word.count > partial.count else { return }
-            let remainder = String(word.dropFirst(partial.count))
-            Log.shared.debug("predict -> \"\(remainder)\" [dictionary] (0ms)")
-            // Presented only once typing pauses (settle gate) — mid-burst caret
-            // bounds can't be trusted, and Cotypist shows nothing mid-burst either.
-            self.presentWhenSettled(suggestion: remainder, isNewSuggestion: true)
-        }
     }
 
     /// The Cotypist presentation rule (observed live): NEVER paint a ghost while
@@ -985,141 +887,6 @@ final class Engine {
         }
     }
 
-    /// Reject/strip suggestions that just repeat what the user already typed. Returns
-    /// the (possibly trimmed) suggestion, or nil if it's a pure echo.
-    nonisolated static func stripEcho(_ suggestion: String, prefix: String) -> String? {
-        let sug = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sug.isEmpty else { return nil }
-        let tail = String(prefix.suffix(120)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tail.isEmpty else { return suggestion }
-
-        let sugLower = sug.lowercased()
-        let tailLower = tail.lowercased()
-        // Pure echo: the suggestion is (part of) the end of what was typed.
-        if tailLower.hasSuffix(sugLower) || sugLower == tailLower { return nil }
-        // Mid-prefix echo: the whole suggestion already appears in the recent text
-        // ("testing how fast the autocomplete" → "how fast the"). Only for LONG
-        // suggestions — re-using a short phrase from two sentences ago ("sounds
-        // good", "the proposal") is normal writing, not an echo; the pure-echo
-        // suffix check above already catches actual repetition at the caret.
-        let echoWords = sugLower.split(separator: " ").count
-        if echoWords >= 4 || sugLower.count >= 30, tailLower.contains(sugLower) { return nil }
-        // Overlap: suggestion starts by repeating the tail's last words → strip it.
-        if sugLower.hasPrefix(tailLower), sug.count > tail.count {
-            let stripped = String(sug.dropFirst(tail.count))
-            return stripped.isEmpty ? nil : stripped
-        }
-        return suggestion
-    }
-
-    /// Reply-opener phrases that signal the model answered instead of continuing the
-    /// user's text (assistant-persona drift). Checked case-insensitively against the
-    /// start of the (trimmed) suggestion.
-    nonisolated private static let assistantSpeakPrefixes: [String] = [
-        "i'm sorry", "i am sorry", "i apologize",
-        "as an ai", "as a language model",
-        "great question", "that's a great",
-    ]
-
-    /// Openers that are fine mid-sentence but signal REPLY-drift when the author
-    /// just finished a sentence ("?"/"!" — exactly when the model is most tempted
-    /// to answer the conversation instead of continuing the author's text).
-    /// "Yes,"/"No,"/"Sure," live here rather than in the unconditional list: in a
-    /// chat the author's OWN reply very often starts exactly that way, and hard-
-    /// rejecting those deleted the highest-value chat suggestions.
-    nonisolated private static let sentenceEndReplyPrefixes: [String] = [
-        "i'll ", "i will ", "i can ", "here's ", "here is ",
-        "you can ", "you should ", "we can ", "let me ",
-        "sure,", "sure!", "sure.", "of course,", "certainly,",
-        "yes,", "yes.", "no,", "no.",
-        "i understand", "i see that",
-        "unfortunately", "thanks for", "thank you for",
-    ]
-
-    /// Reject suggestions that read like an assistant reply rather than a continuation
-    /// of the user's own text. Returns the suggestion unchanged, or nil to reject.
-    /// `inputTail` (the typed text's end) gates the stricter check.
-    nonisolated static func stripAssistantSpeak(_ suggestion: String,
-                                                inputTail: String = "") -> String? {
-        let trimmed = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
-        for prefix in assistantSpeakPrefixes where lower.hasPrefix(prefix) {
-            return nil
-        }
-        // After a finished sentence, reply-shaped openers are almost always the
-        // model answering the conversation, not the author's next sentence.
-        let tail = inputTail.trimmingCharacters(in: .whitespaces)
-        if let last = tail.last, last == "?" || last == "!" {
-            for prefix in sentenceEndReplyPrefixes where lower.hasPrefix(prefix) {
-                return nil
-            }
-        }
-        return suggestion
-    }
-
-    /// Reconcile a suggestion's leading boundary against the char before the caret so
-    /// accepting never merges words (or doubles spaces). Only handles the unambiguous
-    /// whitespace-boundary case; the letter/number-boundary case is ambiguous (same-word
-    /// completion vs. new word) and is resolved by `reconcileMidWord` instead, which can
-    /// actually distinguish the two via the plausibility dictionary.
-    nonisolated static func reconcile(_ suggestion: String, prefix: String) -> String {
-        var s = suggestion
-        guard let prev = prefix.last, prev.isWhitespace else { return s }
-        while let f = s.first, f == " " { s.removeFirst() }
-        return s
-    }
-
-    /// Resolves a suggestion's leading boundary when the caret sits right after a
-    /// letter/number — the case `reconcile` can't disambiguate on its own. Tries the
-    /// same-word completion first (no space — e.g. "the" + "n" → "then", matching what
-    /// the model is explicitly instructed to do when it ends mid-word); if that's
-    /// implausible, reinterprets the fragment as a new word (space inserted) instead of
-    /// just discarding it; only rejects if neither reading is plausible.
-    private func reconcileMidWord(_ suggestion: String, prefix: String, req: CompletionRequest,
-                                  elapsedMs: UInt64) async -> String? {
-        let noLeadingSpace = suggestion.hasPrefix(" ") ? String(suggestion.dropFirst()) : suggestion
-        guard !noLeadingSpace.isEmpty else { return nil }
-
-        let partial = String(prefix.reversed().prefix { $0.isLetter }.reversed())
-        let fragment = String(noLeadingSpace.prefix { $0.isLetter || $0 == "'" })
-
-        // The model often completes the WHOLE word being typed ("te" → "test");
-        // strip the already-typed part so accepting doesn't duplicate it ("tetest").
-        if let stripped = Engine.stripPartialOverlap(suggestion: noLeadingSpace,
-                                                     partial: partial, fragment: fragment) {
-            return stripped.isEmpty ? nil : stripped
-        }
-
-        let sameWordPlausible = await SpellChecker.shared.isPlausibleContinuation(
-            partial: partial, fragment: fragment, language: settings.autocorrectLanguage)
-        if sameWordPlausible {
-            return noLeadingSpace   // direct append — completes the current word
-        }
-
-        // Names and jargon are never in the dictionary, but they're almost always
-        // already visible somewhere — on screen, in the conversation, or earlier in
-        // the author's own text. If the joined word appears in any of those, accept
-        // the same-word reading instead of discarding a correct completion.
-        let joined = (partial + fragment).lowercased()
-        if !partial.isEmpty, joined.count >= 3 {
-            let seenInContext = req.screenContext.lowercased().contains(joined)
-                || req.recentMessages.contains(where: { $0.lowercased().contains(joined) })
-                || prefix.dropLast(partial.count).lowercased().contains(joined)
-            if seenInContext {
-                return noLeadingSpace
-            }
-        }
-
-        let newWordPlausible = await SpellChecker.shared.isPlausibleContinuation(
-            partial: "", fragment: fragment, language: settings.autocorrectLanguage)
-        guard newWordPlausible else {
-            Log.shared.debug("predict -> (mid-word implausible: \(partial)+\(fragment)) (\(elapsedMs)ms)")
-            Statistics.shared.record(.rejectedMidWordImplausible)
-            return nil
-        }
-        return " " + noLeadingSpace
-    }
-
     /// Trims the suggestion's tail when it duplicates the text already after the
     /// caret ("…later today?" suggested while "?" already follows → drop the "?").
     /// Longest overlap wins, capped to keep the scan cheap.
@@ -1136,23 +903,6 @@ final class Engine {
             return String(suggestion.dropLast(len))
         }
         return suggestion
-    }
-
-    /// When the caret is mid-word and the model repeated the word being typed
-    /// ("te" typed, suggestion "test and more"), returns the suggestion with the
-    /// already-typed partial stripped ("st and more"). Returns "" for a pure echo
-    /// of the partial (caller rejects), nil when there's no overlap to strip.
-    nonisolated static func stripPartialOverlap(suggestion: String, partial: String,
-                                                fragment: String) -> String? {
-        guard partial.count >= 2,
-              fragment.lowercased().hasPrefix(partial.lowercased()) else { return nil }
-        guard fragment.count > partial.count else {
-            // Fragment IS the partial ("te" → "te" or "te and more"): drop the
-            // duplicated word, keep any genuine continuation after it. An empty
-            // result (pure echo) is rejected by the caller.
-            return String(suggestion.dropFirst(fragment.count))
-        }
-        return String(suggestion.dropFirst(partial.count))
     }
 
     /// Gate junk predictions: need at least a couple of meaningful characters and a
@@ -1242,13 +992,6 @@ final class Engine {
         let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
         var screenContext = screenContextEnabled
             ? ScreenContextProvider.shared.contextText(for: bundleId, cap: screenCap, host: host) : ""
-        // Cross-app background: the previous app/site's freshest snippet, offered
-        // as an explicitly labeled section — useful ("replying about what I just
-        // read") without masquerading as the current topic.
-        let previousApp = screenContextEnabled
-            ? ScreenContextProvider.shared.previousAppSnippet(excludingBundleId: bundleId, host: host)
-            : nil
-
         let ctx = ContextReader.gather(
             fallbackBuffer: buffer,
             screenContext: screenContext,
@@ -1325,10 +1068,6 @@ final class Engine {
             return
         }
 
-        if settings.collectTypingHistory && settings.storeInputsWithoutAcceptedCompletions {
-            TypingHistoryStore.shared.record(String(ctx.input.suffix(120)))
-        }
-
         // Parked seed: a speculative generation from mid-burst may already cover
         // the current input — serve it instantly instead of generating again.
         if !speculative, let p = parked {
@@ -1363,47 +1102,22 @@ final class Engine {
 
         let engine = router.current
         let clipboard = settings.useClipboardContext ? freshClipboardText() : ""
-        let persona = policy.customInstructions.isEmpty
-            ? settings.personaPreface
-            : settings.personaPreface + " " + policy.customInstructions
-        // Personal few-shot: only once there's real signal (≥5 accepts).
-        let personalExamples: [TypingHistoryStore.AcceptPair] =
-            (settings.collectTypingHistory && TypingHistoryStore.shared.acceptCount >= 5)
-            ? TypingHistoryStore.shared.recentAccepts(limit: 2) : []
-        // The author's own recent writing — the strongest voice/topic context.
-        let previousWriting: [String] = settings.collectTypingHistory
-            ? TypingHistoryStore.shared.contextSamples(budget: 350) : []
-        // The user's last few sent messages in THIS app — conversational thread.
-        let recentMessages = bundleId.flatMap { recentInputs[$0] } ?? []
         var req = CompletionRequest(
             beforeCursor: ctx.input,
             afterCursor: ctx.afterCursor,
             screenContext: screenContext,
             clipboard: clipboard,
-            persona: persona,
-            personalExamples: personalExamples,
-            previousWriting: previousWriting,
-            recentMessages: recentMessages,
             documentStart: ctx.documentStart,
-            previousAppName: previousApp?.app ?? "",
-            previousAppContext: previousApp?.text ?? "",
             screenIsConversation: policy.transcriptViaAX,
             speculative: speculative,
-            screenContextBudget: screenCap,
             maxWords: (PowerMonitor.shared.isLowPower && settings.batteryShorterCompletions)
-                ? min(settings.maxWords, 3) : settings.maxWords,
-            maxTokens: settings.maxTokens,
-            temperature: settings.temperature)
+                ? min(settings.maxWords, 3) : settings.maxWords)
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
         if !speculative { lastReq = req }   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
-        if settings.verboseLog, !(engine is LlamaEngine) {
-            let fullPrompt = PromptBuilder.body(req, cap: PromptBuilder.defaultCap)
-            Log.shared.debug("predict full prompt:\n---\n\(fullPrompt)\n---")
-        }
         let startedAt = DispatchTime.now()
 
         Task { [weak self] in
@@ -1425,8 +1139,7 @@ final class Engine {
             Statistics.shared.record(.requested)
             let raw = await engine.complete(req)
             await self.handlePredictionResult(
-                raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt,
-                exact: engine is LlamaEngine)
+                raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt)
         }
     }
 
@@ -1446,43 +1159,21 @@ final class Engine {
         return cleaned.isEmpty ? nil : (cleaned, false)
     }
 
-    /// Shared post-processing for a raw model output: echo/assistant-speak rejection,
-    /// word-boundary reconciliation, the mid-word plausibility guard, and finally
-    /// showing the suggestion. Used both for the direct `runPrediction()` path and for
-    /// a coalesced request that completes later (`handleLateSuggestion`).
-    /// - Parameter exact: the engine returned exact insertion text (v2: partial word
-    ///   healed, spacing resolved) — skip v1's echo/assistant-speak/boundary repair.
+    /// Post-processing for a finished suggestion (already exact insertion text):
+    /// after-cursor duplicate trim, staleness/remainder/repeat checks via the
+    /// session, parking for speculative requests, then presentation.
     private func handlePredictionResult(raw: String?, req: CompletionRequest, ctxInput: String,
-                                        policy: AppPolicy, startedAt: DispatchTime,
-                                        exact: Bool = false) async {
+                                        policy: AppPolicy, startedAt: DispatchTime) async {
         let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1_000_000
         if settings.verboseLog {
             Log.shared.debug("predict raw model output (pre-post-processing): \(raw.map { "\"\($0)\"" } ?? "nil")")
         }
-        // nil here is usually NOT an empty generation — busy-coalesced and
-        // superseded requests also return nil (and are retried/late-delivered);
-        // the Predictor records the accurate funnel event for each case.
+        // nil: superseded by newer input, below the confidence bar, or nothing likely.
         guard let raw, !raw.isEmpty else {
             Log.shared.debug("predict -> (no suggestion) (\(elapsedMs)ms)")
             return
         }
         var suggestion = raw
-        if !exact {
-            // Drop echoes (the model repeating what was just typed), then reject
-            // assistant-speak/reply-drift, then reconcile the word boundary so
-            // accepting never merges into the prefix.
-            guard let deEchoed = Engine.stripEcho(raw, prefix: ctxInput) else {
-                Log.shared.debug("predict -> (echo rejected) (\(elapsedMs)ms)")
-                Statistics.shared.record(.rejectedEcho)
-                return
-            }
-            guard let clean = Engine.stripAssistantSpeak(deEchoed, inputTail: String(ctxInput.suffix(10))) else {
-                Log.shared.debug("predict -> (assistant-speak rejected) (\(elapsedMs)ms)")
-                Statistics.shared.record(.rejectedAssistantSpeak)
-                return
-            }
-            suggestion = Engine.reconcile(clean, prefix: ctxInput)
-        }
         guard !suggestion.isEmpty else { return }
 
         // Don't duplicate what already follows the caret ("?" suggested when a "?"
@@ -1501,16 +1192,6 @@ final class Engine {
             Log.shared.debug("predict -> (repeat of accepted text rejected) (\(elapsedMs)ms)")
             Statistics.shared.record(.rejectedRepeatAccepted)
             return
-        }
-
-        // Letter/number boundary is ambiguous (same-word completion vs. new word) —
-        // resolve it via the plausibility dictionary rather than always forcing a
-        // space, which used to destroy correct mid-word completions like "the"+"n".
-        if !exact, let lastWord = ctxInput.last, lastWord.isLetter || lastWord.isNumber {
-            guard let resolved = await reconcileMidWord(suggestion, prefix: ctxInput, req: req, elapsedMs: elapsedMs) else {
-                return
-            }
-            suggestion = resolved
         }
 
         // Speculative results are PARKED, never presented — being "stale" is their
@@ -1555,38 +1236,6 @@ final class Engine {
         // Placement resolves inside the settle gate: presentation waits for a
         // typing pause and reads the caret THEN (mid-burst reads are stale).
         presentWhenSettled(suggestion: suggestion, isNewSuggestion: true, allowWrap: allowWrap)
-    }
-
-    /// A coalesced local-model request finished after its original `runPrediction()`
-    /// caller already gave up (see `Predictor.onLateSuggestion`). Only shown if the
-    /// caret prefix still matches what it was generated for — never shows a
-    /// suggestion behind what's since been typed.
-    private func handleLateSuggestion(raw: String, req: CompletionRequest) {
-        if let until = pausedUntil, Date() < until { return }
-        // Never replace (or re-kick over) a remainder being Tabbed through.
-        if session.isProtectingRemainder {
-            Statistics.shared.record(.heldForRemainder)
-            return
-        }
-        let ctx = ContextReader.gather(
-            fallbackBuffer: buffer, screenContext: req.screenContext, inputChars: settings.contextChars)
-        // Speculative results skip the staleness check — they're parked, and being
-        // generated for an older snapshot is their whole point.
-        guard req.speculative || ctx.input == req.beforeCursor else {
-            Log.shared.debug("predict -> (late suggestion stale, discarded)")
-            Statistics.shared.record(.discardedStale)
-            schedulePrediction()   // regenerate for the input as it is NOW
-            return
-        }
-        let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
-        guard policy.isEnabled else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            await self.handlePredictionResult(
-                raw: raw, req: req,
-                ctxInput: req.speculative ? req.beforeCursor : ctx.input,
-                policy: policy, startedAt: DispatchTime.now())
-        }
     }
 
     /// Display the suggestion: inline ghost text when we have precise caret bounds,
@@ -1876,15 +1525,6 @@ final class Engine {
             .insertionStrategy
         let wordCount = toInsert.split(whereSeparator: { $0 == " " || $0 == "\n" }).count
         Statistics.shared.recordAccepted(wordCount: max(wordCount, toInsert.isEmpty ? 0 : 1))
-        if settings.collectTypingHistory {
-            TypingHistoryStore.shared.record(toInsert)
-            // Prefix+accepted pair → personal few-shot examples; the accepted text
-            // also feeds the phrase memory (buffer already includes toInsert).
-            TypingHistoryStore.shared.recordAccept(
-                prefixTail: String(buffer.dropLast(toInsert.count).suffix(80)),
-                accepted: toInsert)
-            PhraseMemory.shared.ingest(String(buffer.suffix(160)))
-        }
 
         // Snapshot the pre-insertion field length so the speculative re-prediction
         // below can wait until the WHOLE insert has landed in the AX tree —
