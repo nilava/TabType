@@ -34,7 +34,7 @@ TabType isn't notarized (it's free and non-commercial), so macOS shows a warning
 3. **System Settings ▸ Privacy & Security ▸ "Open Anyway"** next to TabType, then confirm.
    - Or in Terminal: `xattr -dr com.apple.quarantine /Applications/TabType.app`
 4. Grant **Accessibility** when asked (required). Screen Recording is optional.
-5. First launch downloads the model (~2.3 GB) — the menu-bar icon shows progress.
+5. First launch downloads the model (~1.1–2.5 GB) — the menu-bar icon shows progress.
 
 Apple Silicon Mac, macOS 14+.
 ```
