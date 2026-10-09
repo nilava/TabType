@@ -595,8 +595,13 @@ struct AdvancedSettingsView: View {
         Form {
             Section("Diagnostics") {
                 Toggle("Verbose logging", isOn: $settings.verboseLog)
-                Button("Open Log in Console") {
-                    NSWorkspace.shared.open(Log.fileURL)
+                Text("Verbose logs include snippets of what you type. Keep it off unless you're reporting a bug.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Open Log in Console") {
+                        NSWorkspace.shared.open(Log.fileURL)
+                    }
+                    Button("Delete Logs") { Log.shared.clear() }
                 }
             }
             Section {

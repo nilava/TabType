@@ -59,13 +59,14 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 - Reads the conversation or document **above the field you're typing in** (on-device OCR, like Cotypist) — chats, email, docs — with the accessibility tree as a fallback; captures when you pause, waits for a chat's first capture, and keeps a message's context steady while you type it
 - **Document-aware long-form context**: in writing apps it reads a large window around your cursor *plus* the document's opening lines
 - **Per-app transparency**: Settings → Apps shows exactly what each app gets — and lets you change it
-- **Learns from your writing** (opt-in): an encrypted local index of what you've written nudges suggestions toward your names, phrases and sign-offs
+- **Learns from your writing** (opt-in): an encrypted local index of what you've written nudges suggestions toward your names, phrases and sign-offs; turning it on imports your existing writing history once
 - **Terminals**: suggestions inside AI agents' prompts (Claude Code, Codex, Gemini CLI) — never at the shell
 
 **Private by design**
 - 100% on-device inference; the only network requests are the model download, the public model list and the update check
 - Optional writing history is **AES-GCM encrypted** on disk and never leaves the Mac
 - Password fields and password managers are never read; small fields (search boxes) are skipped
+- The diagnostic log is capped (5 MB) and only holds typed text while *Verbose logging* is on; Settings → Advanced deletes it
 
 **Models**
 - Curated GGUF catalog (Qwen3 0.6B–4B base, Gemma 4) with RAM-based recommendations; resumable, SHA-256-verified downloads
