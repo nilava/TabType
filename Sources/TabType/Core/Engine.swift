@@ -74,6 +74,7 @@ final class Engine {
     private struct PendingKey { var chars: String; var deletion: Bool; var at: UInt64 }
     private var fieldRead: FieldRead?
     private var pendingKeys: [PendingKey] = []
+    private var seedRead: DispatchWorkItem?
     private var expectedLimit = AppSettings.inputContextChars
 
     /// The text before the caret with every pending keystroke applied.
@@ -695,6 +696,11 @@ final class Engine {
             for key in [settings.acceptWordKey, settings.acceptAllKey] where key.isSet {
                 if tabDisabled && key.keyCode == 48 { continue }
                 keys.insert(key)
+                // ⌥ + the key sends the plain key on (a real Tab with a ghost up).
+                let option = CGEventFlags.maskAlternate.rawValue
+                if currentSuggestion != nil, key.modifiers & option == 0 {
+                    keys.insert(KeyBinding(keyCode: key.keyCode, modifiers: key.modifiers | option))
+                }
             }
             if settings.dismissKey.isSet { keys.insert(settings.dismissKey) }
         }
@@ -1116,6 +1122,28 @@ final class Engine {
     private func dropPendingEdits() {
         fieldRead = nil
         pendingKeys.removeAll()
+        scheduleSeedRead()
+    }
+
+    /// Once the field has settled after a drop (focus, click, Return), read it
+    /// again: the next keystroke then has a local copy to predict from at once,
+    /// instead of waiting up to 0.4s for the app to show it.
+    private func scheduleSeedRead() {
+        seedRead?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.fieldRead == nil,
+                  Date().timeIntervalSince(self.lastKeystrokeAt) > 0.15,   // typing: the prediction reads it
+                  let element = AccessibilityBridge.focusedElement(),
+                  !AccessibilityBridge.isSecureField(element),
+                  let full = AccessibilityBridge.stringValue(of: element) else { return }
+            let readAt = Self.uptimeNow()
+            let caret = AccessibilityBridge.caretOffset(of: element)
+            let before = AccessibilityBridge.split(full, caretUTF16: caret).before
+            self.fieldRead = FieldRead(text: String(before.suffix(self.expectedLimit)), caret: caret, at: readAt)
+            Log.shared.debug("pending edits: read the field ahead of typing (\(before.count) chars before the caret)")
+        }
+        seedRead = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
     /// Line-height cache: the caret height each field usually reports. A caret
