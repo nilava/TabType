@@ -335,7 +335,7 @@ per-domain enable/disable/timed pause; mid-line suggestions opt-in per app.
 Reconstructed from Cotypist's behaviour and app structure (no code or prompt text copied); each change measured on `tabtype-eval` or verified live.
 - [x] Placement: AX font/colour (`AXFont` / `AXForegroundColor`), family-only fit when only the size is reported, capture squeeze + transparent-hole fixes, own ghost view, Cotypist's caret checks, single-line snap, visual line start, full-width wrapping, field notifications, no fade-in
 - [x] Latency: no fixed settles (ready when the caret reaches its expected position), local field copy with timestamped keys, in-flight generation kept and spliced, lookahead for instant Tab chains, 30 s result cache, 0.25 s AX timeout
-- [x] Decoder: 9-wide phrase beam from the best first word (exact pruning), extension bar 0.2, show bar 0.10 / 0.15 (boundary / mid-word); Cotypist's length steps 2 / 4 / 7 / 10
+- [x] Decoder: 9-wide phrase beam from the best first word (exact pruning), extension bar 0.05 (was 0.2; retuned on the author's writing), show bar 0.15 / 0.08 (boundary / mid-word); Cotypist's length steps 2 / 4 / 7 / 10
 - [x] Context: OCR above the field (≤800pt, column ±70pt), capture on pause, wait for a chat's first capture, context held steady per message, AX transcript as fallback
 - [x] Keyboard: listen-only tap; Tab / accept-all / Esc as hotkeys only while a suggestion is up; Chromium same-field focus echo ignored
 - [x] Gating: typo check on the current word only, minimum field size, terminals only inside AI-agent prompts

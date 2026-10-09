@@ -81,6 +81,74 @@ As you type, TabType shows a dimmed **ghost-text** prediction of what comes next
 - **Sync between Macs** via iCloud Drive, end-to-end encrypted with your passphrase
 - **In-app updates** from GitHub Releases, verified (checksum + signature) before installing
 
+## 🔬 What changed in v2.1 — and why
+
+v2.0 worked, but next to Cotypist it felt worse: the ghost sat in the wrong place, appeared late, was usually one word, and often missed what the conversation was about. For v2.1 we studied Cotypist's observable behaviour and the structure of its app (no Cotypist code, prompt text or model is used), live-tested in TextEdit, Chrome, Safari, Terminal, Claude and Slack, and measured every change on two eval sets: the public 192-case seed set and a private set of 867 cases built from the author's own messages (kept out of git). Here's what we found and what we did about it.
+
+### Placement — the ghost should look typed by the app
+| Found | Changed |
+|---|---|
+| The font was never read from the app (the code looked for a type that doesn't cross processes): 0 of 984 placements had it, so the size was guessed | Read the app's font and colour over accessibility; pixel-fit from the screen only when the app reports just a size |
+| Screen captures of fractional rects were squeezed, and transparent pixels and trailing spaces threw the fitter off | Capture whole pixels and crop; transparent counts as background; the fitter keeps trailing spaces |
+| Apps sometimes report a caret on the wrong line, a huge marker rect, or a frame outside the field | Cotypist-style caret sanity checks, snap to the line, retry at 40/80/160 ms, a per-field line-height cache |
+| Long suggestions ran off the field's edge | Wrap across the field from the visual line start, like real text |
+| Web editors with a hidden input (Monaco-style) had no caret | Treat the hidden input's frame as the caret |
+| A faint box flashed as the ghost faded in | No window animation; the overlay is invisible to accessibility |
+
+### Speed — the ghost should appear as soon as the app catches up
+| Found | Changed |
+|---|---|
+| Fixed delays waited for typing to "settle" | Present the moment the app's caret reaches where TabType expects it — no fixed waits |
+| Every keystroke waited for the app to publish its text | Keep a local copy of the field plus the keys the app hasn't shown yet, confirmed by content (an observing tap can hear a key after the app already showed it) |
+| Typing ahead threw away a generation that was nearly done | Keep it and splice it when the new text is a prefix of the suggestion |
+| Tab-Tab-Tab waited for a new prediction per word | Precompute what follows the suggestion while it's on screen; 30 s result cache |
+| The first keystroke in a new field waited up to 0.4 s | Re-read the field once it settles after focus moves |
+| The first suggestion after launch took ~2.2 s (the spelling dictionary loaded inside the typo check) | Load it in the background at launch → ~240 ms |
+
+### Suggestions — longer, and only when the model is sure
+| Found | Changed |
+|---|---|
+| Suggestions were almost always one word: each extra word needed ≥ 50% probability | A 9-wide **beam search over whole phrases** (Cotypist's search), started from the model's best first word, then a measured extension bar: 0.5 → 0.2 → **0.05**. On the author's writing that's 2.2 words on average (57% multi-word, was 22%) and the most typing saved (1.46 vs 1.37 chars per case) — the first word never changes |
+| One confidence bar for everything showed wrong next-word guesses and hid good word endings | Split bar: lower mid-word (finishing a word is right 53–65% of the time), higher at a word boundary (21–32%) |
+| Half-typed misspellings got completed | Also check the word being typed: one that can't become a real word gets no suggestion (as Cotypist does) |
+| Several settings (suggestion delay, context size, screenshot mode, the voice adapter…) got in the way of suggestions | Removed; length stays (Cotypist's 2 / 4 / 7 / 10 words) |
+
+### Context — know what the conversation is about
+| Found | Changed |
+|---|---|
+| Context went stale: captures froze while typing and none ran at a pause — Slack had no context for 334 of 406 predictions | Capture 1.1 s after the last keystroke; keep screen context even on a message's first words |
+| OCR read a band around the caret, which lost left-aligned incoming chat bubbles | OCR the area **above the field** you're typing in (≤ 800 pt, the field's column ± 70 pt), the accessibility tree as a fallback |
+| Context changed under you mid-message, rewriting the prompt (and the model's cache) | Capture when you pause; a message keeps the context it started with, refreshed after 2 s idle, on Return or focus change |
+| The first suggestion in a chat had no context yet | Wait up to 0.3 s for a chat's first capture |
+| "Name: …" conversation framing helped labelled transcripts but hurt OCR text (31.8 → 33.4% chat recall without it) | Frame as a conversation only when the text really is a transcript |
+
+### Keys — never get in the way
+| Found | Changed |
+|---|---|
+| An intercepting key tap could delay or drop keys | **Listen-only** tap; Tab, ⇧Tab and Esc are system hotkeys only while a suggestion is up, re-sent to the app when there's nothing to do |
+| A quick double Tab moved focus: Chromium re-announces focus on the same field, which dropped the rest of the suggestion | Ignore same-field focus echoes; don't re-place on stale WebKit caret bounds after Tab |
+| The listen-only tap can hear a key after the app showed it, so the local copy sometimes added it twice | Timestamped pending keys, confirmed against the field's content |
+| ⌥Tab reached the app as ⌥Tab | ⌥ + the accept key sends the plain key (a real Tab) |
+| Terminals got suggestions at the shell prompt | Only inside AI agents' prompts (Claude Code, Codex, Gemini CLI) |
+| Search boxes got suggestions | Skip small fields (Cotypist's size gate) |
+
+### Reliability
+- **Suggestions stopped after a while** — the model was unloaded when idle or under memory pressure and never reloaded. It's now parked and reloaded on the next keystroke.
+- The public model list on `main` could override this build's tuning — only a strictly newer list is used now.
+- Interrupted model downloads resume at launch. The diagnostic log is capped at 5 MB and holds typed text only while *Verbose logging* is on.
+
+### What we tried and didn't ship
+| Tried | Result |
+|---|---|
+| Letting the beam replace the first word (as Cotypist does) | −3.6 points next-word recall |
+| A sectioned, token-budgeted prompt layout (like Cotypist's) | Recall 58.3 → 55.7%; kept as an eval experiment (`--sections`) |
+| Gemma 4 E4B | Below Qwen3-4B on the author's writing (30.2 vs 31.0% recall) and slower (217 vs 148 ms) |
+| Cotypist's own model file (Gemma 4 E2B), tested locally | Loads and runs fine in TabType and is ~50 ms faster, but saves 20% fewer characters on the author's writing (1.17 vs 1.46) and 14% fewer on the seed set (3.12 vs 3.64), at a larger file (3.4 vs 2.5 GB). The model isn't Cotypist's edge — Qwen3-4B stays |
+| No extension bar at all | Barely more saved (1.47 vs 1.46 chars) for 15% more wrong words |
+
+### Where it stands
+On real chat, suggestion quality is limited by how predictable people are: about a third of next words are guessable (34% on the author's writing; 59% on the seed set), finishing a half-typed word is right about half the time, and guessing the word after a space about a fifth. Screen context (27.5 → 31.0% recall) and learning from your writing (+5% characters from only 177 messages) are the levers that move it, so turning on *Learn from your writing* matters. Full numbers: [eval/README.md](eval/README.md); feature-by-feature status vs Cotypist: [docs/COMPARISON.md](docs/COMPARISON.md).
+
 ## 🆚 How TabType compares
 
 | | **TabType** | **Cotypist** | **Copilot / OS predictive text** |
@@ -180,7 +248,7 @@ TabType is built by a **senior full-stack engineer with 5+ years of experience**
 
 **Documentation** — This README and the other docs (`CONTRIBUTING.md`, `RELEASING.md`, `docs/COMPARISON.md`, issue templates) were **written with AI assistance** and reviewed by the author.
 
-**The completion model** — Suggestions come from a **third-party, open-weights language model** (by default the [Qwen3-4B base model](https://huggingface.co/Qwen/Qwen3-4B-Base) from Alibaba's Qwen team, as a community GGUF quantization; Google's Gemma and others are also selectable). TabType did **not** train or fine-tune any model — it runs these pre-trained weights locally via [llama.cpp](https://github.com/ggml-org/llama.cpp). Optional LoRA adapters are ones you supply yourself. Their training data and behavior are the model authors', governed by their respective licenses (e.g. the Qwen and Gemma terms).
+**The completion model** — Suggestions come from a **third-party, open-weights language model** (by default the [Qwen3-4B base model](https://huggingface.co/Qwen/Qwen3-4B-Base) from Alibaba's Qwen team, as a community GGUF quantization; Google's Gemma and others are also selectable). TabType did **not** train or fine-tune any model — it runs these pre-trained weights locally via [llama.cpp](https://github.com/ggml-org/llama.cpp). Their training data and behavior are the model authors', governed by their respective licenses (e.g. the Qwen and Gemma terms).
 
 **Runtime output provenance** — Every suggestion you see is **generated on-device by that language model** from your local context (the text you're typing, your recent messages/writing, and — with permission — nearby on-screen text). Outputs are probabilistic and **not curated, fact-checked, or reviewed** by a human or by us; treat them like any LLM output — they can be wrong, biased, or inappropriate. Nothing is sent to a server; generation is 100% local. TabType does not collect, transmit, or train on your text.
 

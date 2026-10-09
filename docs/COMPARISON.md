@@ -23,8 +23,8 @@ TabType's design follows Cotypist's, reconstructed from its observable behaviour
 ### Deliberately different (measured on `tabtype-eval`, seed-v1, Qwen3-4B base)
 - **The beam starts from the model's best first word.** Letting it swap the first word (as Cotypist does) cost 3.6 points of next-word recall.
 - **Plain prompt layout.** Cotypist wraps prompt parts in delimited, token-budgeted sections; its delimiters are encrypted, and ours measured worse (recall 58.3 → 55.7%). The sectioned layout is kept as an experiment (`--sections`).
-- **Default model.** Qwen3-4B base on 16 GB+ Macs (Cotypist ships its own Gemma 4 E2B quantization). Gemma 4 E2B scored lower in our harness; Qwen3-4B is about twice the size, so the phrase search runs ~150 ms median.
-- **Thresholds** are tuned on our eval (show: 0.10 at a word boundary, 0.15 mid-word; extend while each word ≥ 0.2) — Cotypist's values couldn't be recovered.
+- **Default model.** Qwen3-4B base on 16 GB+ Macs (Cotypist ships its own Gemma 4 E2B quantization). Run locally in TabType, Cotypist's model file was ~50 ms faster but saved 20% fewer characters on the author's writing (1.17 vs 1.46 per case) and 14% fewer on seed-v1 (3.12 vs 3.64), and is a larger file (3.4 vs 2.5 GB).
+- **Thresholds** are tuned on our eval (show: 0.15 at a word boundary, 0.08 mid-word; extend while each word ≥ 0.05) — Cotypist's values couldn't be recovered.
 - **Accessibility fallback** for chats when OCR finds nothing (Cotypist reads chats from the screen only).
 
 ### Done differently because there's no Apple Developer account
