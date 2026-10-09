@@ -154,6 +154,21 @@ final class LlamaIntegrationTests: XCTestCase {
         XCTAssertFalse(afterUnload)
     }
 
+    /// Idle / memory-pressure unloads park the model; the next request brings it
+    /// back (it used to stay unloaded, and every suggestion came back empty).
+    func testParkedModelReloadsOnTheNextRequest() async throws {
+        guard let path = Self.modelPaths.first else { throw XCTSkip("no GGUF models in models/") }
+        let engine = InferenceEngine()
+        try await engine.load(modelPath: path)
+        await engine.park()
+        let stillReady = await engine.isReady
+        XCTAssertTrue(stillReady)
+        let id = engine.beginRequest()
+        let result = try await engine.complete("Thanks for the update ", options: DecoderOptions(), requestID: id)
+        XCTAssertNotNil(result)
+        await engine.unload()
+    }
+
     private func argmax(_ v: [Float]) -> Int { v.indices.max { v[$0] < v[$1] }! }
     private func top(_ v: [Float], _ k: Int) -> [Int] { Array(v.indices.sorted { v[$0] > v[$1] }.prefix(k)) }
 

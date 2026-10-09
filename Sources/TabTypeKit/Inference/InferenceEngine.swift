@@ -40,6 +40,9 @@ public actor InferenceEngine {
 
     private let gate = GenerationGate()
     private var runtime: LlamaRuntime?
+    /// The model to bring back after an idle or memory-pressure unload; nil after
+    /// an explicit `unload()` (model deleted, app quitting).
+    private var parkedModelPath: String?
     private var configuration = LlamaRuntime.Configuration()
     private var lastUse = Date()
     private var idleCheck: Task<Void, Never>?
@@ -47,8 +50,9 @@ public actor InferenceEngine {
 
     public init() {}
 
-    public var isReady: Bool { runtime != nil }
-    public var loadedModelPath: String? { runtime?.modelPath }
+    /// A model is loaded, or parked and reloaded on the next request.
+    public var isReady: Bool { runtime != nil || parkedModelPath != nil }
+    public var loadedModelPath: String? { runtime?.modelPath ?? parkedModelPath }
 
     // MARK: Lifecycle
 
@@ -71,8 +75,36 @@ public actor InferenceEngine {
     public func unload() {
         _ = gate.next()   // anything still queued is stale
         runtime = nil
+        parkedModelPath = nil
         state = .unloaded
         idleCheck?.cancel()
+    }
+
+    /// Free the model but remember it: the next request loads it again.
+    func park() {
+        guard let path = runtime?.modelPath else { return }
+        _ = gate.next()
+        runtime = nil
+        parkedModelPath = path
+        idleCheck?.cancel()
+        // `state` stays `.ready`: to callers the model is available.
+    }
+
+    /// The runtime, reloading a parked model (idle / memory pressure) on demand.
+    private func activeRuntime() -> LlamaRuntime? {
+        if let runtime { return runtime }
+        guard let path = parkedModelPath else { return nil }
+        do {
+            runtime = try LlamaRuntime(modelPath: path, configuration: configuration)
+            parkedModelPath = nil
+            lastUse = Date()
+            scheduleIdleCheck()
+            return runtime
+        } catch {
+            state = .failed(modelPath: path, message: "\(error)")
+            parkedModelPath = nil
+            return nil
+        }
     }
 
     /// Apply (or clear, with nil) a LoRA adapter on the loaded model.
@@ -90,7 +122,7 @@ public actor InferenceEngine {
     /// Runs the decoder for `text` unless a newer request superseded this one.
     /// Returns nil when superseded, cancelled mid-decode, or not loaded.
     public func complete(_ text: String, options: DecoderOptions, requestID: UInt64) throws -> CompletionResult? {
-        guard gate.isCurrent(requestID), let runtime else { return nil }
+        guard gate.isCurrent(requestID), let runtime = activeRuntime() else { return nil }
         lastUse = Date()
         let gate = self.gate
         do {
@@ -105,7 +137,7 @@ public actor InferenceEngine {
     /// Replacements for a selected word (synonym picker), ranked by fit on both sides.
     public func replacements(before: String, selected: String, after: String, count: Int,
                              requestID: UInt64) throws -> [WordScore] {
-        guard gate.isCurrent(requestID), let runtime else { return [] }
+        guard gate.isCurrent(requestID), let runtime = activeRuntime() else { return [] }
         lastUse = Date()
         let gate = self.gate
         do {
@@ -119,7 +151,7 @@ public actor InferenceEngine {
     /// Prefill a stable prompt head (template + context) so the first real request
     /// only computes the typed text.
     public func warmUp(_ text: String) throws {
-        guard let runtime else { return }
+        guard let runtime = activeRuntime() else { return }
         let tokens = runtime.tokenize(HealSplit.split(text).prompt, addSpecial: true)
         guard !tokens.isEmpty else { return }
         _ = try runtime.evaluatePrompt(tokens)
@@ -139,7 +171,7 @@ public actor InferenceEngine {
 
     private func unloadIfIdle() {
         guard runtime != nil, Date().timeIntervalSince(lastUse) >= idleUnloadDelay else { return }
-        unload()
+        park()
     }
 
     private func installMemoryPressureHandler() {
@@ -157,6 +189,6 @@ public actor InferenceEngine {
     /// request just ran (it reloads on demand).
     private func handleMemoryPressure() {
         guard Date().timeIntervalSince(lastUse) > 30 else { return }
-        unload()
+        park()
     }
 }
