@@ -18,6 +18,10 @@ final class SpellChecker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.tabtype.spell", qos: .utility)
     private var loaded: [String: SymSpell] = [:]       // language -> index
     private var lru: [String] = []                     // most-recent last
+    /// Building an index takes seconds: it runs here, never on `queue`, so a
+    /// check made meanwhile fails open instead of stalling a suggestion.
+    private let loadQueue = DispatchQueue(label: "app.tabtype.spell.load", qos: .utility)
+    private var loading = Set<String>()                // on `queue`
     private let maxLoaded = 2
 
     private init() {}
@@ -25,7 +29,7 @@ final class SpellChecker: @unchecked Sendable {
     /// Kick off a background index build for `language` (idempotent).
     func loadIfNeeded(language: String) {
         let lang = normalized(language)
-        queue.async { [weak self] in self?.ensureLoaded(lang) }
+        queue.async { [weak self] in _ = self?.ensureLoaded(lang) }
     }
 
     /// A confident correction for `word` in `language`, on the main actor, or nil.
@@ -138,12 +142,25 @@ final class SpellChecker: @unchecked Sendable {
         return Self.supported.contains(code) ? code : "en"
     }
 
-    @discardableResult
+    /// The language's index, or nil while it's built in the background.
     private func ensureLoaded(_ lang: String) -> SymSpell? {
         if let s = loaded[lang] {
             touch(lang)
             return s
         }
+        guard !loading.contains(lang) else { return nil }
+        loading.insert(lang)
+        loadQueue.async { [weak self] in
+            let sym = Self.build(lang)
+            self?.queue.async {
+                self?.loading.remove(lang)
+                if let sym { self?.store(lang, sym) }
+            }
+        }
+        return nil
+    }
+
+    private static func build(_ lang: String) -> SymSpell? {
         let urls = [
             Bundle.module.url(forResource: "frequency_dictionary_\(lang)", withExtension: "txt"),
             Bundle.main.url(forResource: "frequency_dictionary_\(lang)", withExtension: "txt"),
@@ -152,7 +169,6 @@ final class SpellChecker: @unchecked Sendable {
             if let text = try? String(contentsOf: url, encoding: .utf8) {
                 let sym = SymSpell(maxEditDistance: 2, prefixLength: 7)
                 sym.load(contents: text)
-                store(lang, sym)
                 Log.shared.info("SpellChecker ready [\(lang)]")
                 return sym
             }

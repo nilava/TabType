@@ -74,9 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 if case .ready = status { self?.engine.warmUpModel() }
             }
             .store(in: &cancellables)
-        if settings.autocorrectEnabled {
-            SpellChecker.shared.loadIfNeeded(language: settings.autocorrectLanguage)
-        }
+        // Autocorrect and the typo gate on suggestions both use it.
+        SpellChecker.shared.loadIfNeeded(language: settings.autocorrectLanguage)
 
         // Ask for Screen Recording up front if screen memory is on (non-blocking).
         if settings.useScreenContext && !ScreenContextProvider.shared.hasPermission() {
