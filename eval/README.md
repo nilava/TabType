@@ -88,11 +88,24 @@ what changes is how much wrong text follows a right first word.
 | 4 · 0.5 | 2.92 | 66.7% | 0.33 |
 | 4 · 0.7 | 2.68 | 70.6% | 0.26 |
 | 4 · none (Cotypist-style: run to the cap) | 3.81 | 19.6% | 1.67 |
-| **4 · 0.2 (default)** | **3.62** | **39.2%** | **0.95** |
+| 4 · 0.2 (previous default) | 3.62 | 39.2% | 0.95 |
 
 0.5 looked best on paper but in real typing made almost every suggestion one
 word (the next word rarely clears 0.5), so a Tab chain needed a new prediction
 per word. 0.2 keeps ~95% of the uncapped characters with ~40% fewer wrong words.
+
+On the author's own writing (867 cases, with history), 0.2 still left 78% of
+suggestions a single word. The default is now **0.05**:
+
+| extension bar | words shown | multi-word | chars / case | fully right | wrong words / case |
+|---|---|---|---|---|---|
+| 0.2 | 1.37 | 22% | 1.37 | 27.9% | 0.98 |
+| 0.1 | 1.79 | 41% | 1.42 | 20.5% | 1.39 |
+| **0.05 (default)** | **2.20** | **57%** | **1.46** | **15.2%** | **1.79** |
+| 0 | 2.47 | 69% | 1.47 | 11.5% | 2.06 |
+
+The first word is the same at every bar; Tab accepts one word at a time, so a
+wrong trailing word only costs a glance.
 
 ### Phrase search (4 words, bar 0.2)
 

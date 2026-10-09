@@ -9,10 +9,12 @@ public struct DecoderOptions: Sendable, Equatable {
     /// After the beam picks a phrase, words past the first are kept while each
     /// one's probability (given the words before it) stays at or above this; 0
     /// shows the whole phrase, >1 disables extension.
-    /// Eval seed-v1 (Qwen3-4B base, 4 words): 0.2 keeps ~95% of the accepted
-    /// characters of no bar at all (3.62 vs 3.81 per case) with ~40% fewer wrong
-    /// trailing words; 0.5 made almost every suggestion a single word.
-    public var extensionThreshold = 0.2
+    /// On the author's own writing (Qwen3-4B base) 0.2 left 78% of suggestions a
+    /// single word; 0.05 shows 2.2 words on average (57% multi-word) and saves
+    /// the most typing (1.46 vs 1.37 chars per case). The first word never
+    /// changes, and Tab takes one word at a time, so a wrong trailing word costs
+    /// a glance. 0.5 made almost every suggestion a single word.
+    public var extensionThreshold = 0.05
     /// Hard cap on suggested words (including the first).
     public var maxWords = 4
     /// Phrases kept alive while searching past the first word (Cotypist: 9). The
