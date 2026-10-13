@@ -102,6 +102,38 @@ final class TrimmerAndTypoTests: XCTestCase {
         XCTAssertNil(makeSym().topCompletion(prefix: "un"))
     }
 
+    // MARK: - SymSpell.bestSuggestion (acronym & short-word protection)
+
+    private func makeCorrectionSym() -> SymSpell {
+        let sym = SymSpell()
+        sym.load(contents: """
+        map 309676581
+        ape 15000000
+        ali 25000000
+        the 500000000
+        and 400000000
+        receive 80000000
+        """)
+        return sym
+    }
+
+    func testBestSuggestionDoesNotAutocorrectMcpOrTechAcronyms() {
+        let sym = makeCorrectionSym()
+        XCTAssertNil(sym.bestSuggestion("mcp"))
+        XCTAssertNil(sym.bestSuggestion("MCP"))
+        XCTAssertNil(sym.bestSuggestion("llm"))
+        XCTAssertNil(sym.bestSuggestion("api"))
+        XCTAssertNil(sym.bestSuggestion("cli"))
+        XCTAssertNil(sym.bestSuggestion("macOS"))
+    }
+
+    func testBestSuggestionAllowsThreeLetterTranspositionsAndNormalTypos() {
+        let sym = makeCorrectionSym()
+        XCTAssertEqual(sym.bestSuggestion("teh"), "the")
+        XCTAssertEqual(sym.bestSuggestion("adn"), "and")
+        XCTAssertEqual(sym.bestSuggestion("recieve"), "receive")
+    }
+
     // MARK: - shouldPredict email gate
 
     func testEmailInProgressBlocksPrediction() {

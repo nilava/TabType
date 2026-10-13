@@ -222,6 +222,7 @@ enum AppPolicyStore {
     /// Apps that need clipboard paste for reliable insertion.
     private static let pasteApps: Set<String> = [
         "com.tinyspeck.slackmacgap", "com.google.Chrome", "com.microsoft.VSCode",
+        "com.google.antigravity", "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf",
         "notion.id", "md.obsidian",
     ]
 
@@ -230,7 +231,8 @@ enum AppPolicyStore {
     /// behavior documented on its compatibility page).
     private static let codeEditorApps: Set<String> = [
         "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92" /* Cursor */,
-        "com.exafunction.windsurf", "com.apple.dt.Xcode",
+        "com.exafunction.windsurf", "com.google.antigravity", "dev.zed.Zed",
+        "com.apple.dt.Xcode",
     ]
     private static let codeEditorBundlePrefixes = ["com.jetbrains."]
 
@@ -240,7 +242,8 @@ enum AppPolicyStore {
     private static let electronApps: Set<String> = [
         "com.anthropic.claudefordesktop", "com.tinyspeck.slackmacgap",
         "com.hnc.Discord", "net.whatsapp.WhatsApp", "notion.id", "md.obsidian",
-        "com.microsoft.VSCode", "com.spotify.client", "com.figma.Desktop",
+        "com.microsoft.VSCode", "com.google.antigravity", "com.todesktop.230313mzl4w4u92",
+        "com.exafunction.windsurf", "com.spotify.client", "com.figma.Desktop",
         "com.microsoft.teams2", "us.zoom.xos",
         "org.whispersystems.signal-desktop", "im.riot.app", "im.beeper",
         "Mattermost.Desktop", "org.zulip.zulip-electron", "com.facebook.archon",
@@ -315,6 +318,11 @@ enum AppPolicyStore {
         if codeEditorApps.contains(id)
             || codeEditorBundlePrefixes.contains(where: { id.hasPrefix($0) }) {
             policy.chatPanelsOnly = true
+            // Since completions in code editors only run inside AI chat sidebars,
+            // read the visible chat transcript via AX so suggestions match the conversation.
+            policy.forceScreenContext = true
+            policy.transcriptViaAX = true
+            policy.screenContextCap = chatContextCap
         }
         switch id {
         case "com.apple.Safari": policy.fontFactor = 0.98

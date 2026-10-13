@@ -7,6 +7,7 @@ final class GhostTextView: NSView {
     private let storage = NSTextStorage()
     private let layout = NSLayoutManager()
     private let container = NSTextContainer()
+    private var backdropColor: NSColor?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -20,9 +21,12 @@ final class GhostTextView: NSView {
     override var isFlipped: Bool { true }
 
     /// Lays out `text` in `width`; returns the used height and line 1's baseline
-    /// (from the top).
+    /// (from the top). When `backdropColor` is provided, a tight rounded
+    /// backdrop is painted behind each line fragment's glyphs.
     func configure(text: String, font: NSFont, color: NSColor, width: CGFloat,
-                   firstLineIndent: CGFloat, maxLines: Int) -> (height: CGFloat, firstBaseline: CGFloat) {
+                   firstLineIndent: CGFloat, maxLines: Int,
+                   backdropColor: NSColor? = nil) -> (height: CGFloat, firstBaseline: CGFloat) {
+        self.backdropColor = backdropColor
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.firstLineHeadIndent = firstLineIndent
@@ -46,6 +50,14 @@ final class GhostTextView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let glyphs = layout.glyphRange(for: container)
+        if let bg = backdropColor, glyphs.length > 0 {
+            bg.setFill()
+            layout.enumerateLineFragments(forGlyphRange: glyphs) { _, usedRect, _, _, _ in
+                guard usedRect.width > 0, usedRect.height > 0 else { return }
+                let pill = usedRect.insetBy(dx: -2, dy: 0)
+                NSBezierPath(roundedRect: pill, xRadius: 3, yRadius: 3).fill()
+            }
+        }
         layout.drawGlyphs(forGlyphRange: glyphs, at: .zero)
     }
 }

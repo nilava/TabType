@@ -117,7 +117,7 @@ final class Updater: ObservableObject {
 
                 let mount = FileManager.default.temporaryDirectory.appendingPathComponent("TabType-update-\(UUID().uuidString)")
                 try await Self.background { try Self.run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-mountpoint", mount.path]) }
-                defer { try? Self.run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
+                defer { _ = try? Self.run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
                 let newApp = mount.appendingPathComponent("TabType.app")
                 let bundlePath = Bundle.main.bundlePath
                 let same = try await Self.background {

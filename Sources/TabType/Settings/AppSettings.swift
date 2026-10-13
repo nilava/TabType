@@ -205,9 +205,9 @@ final class AppSettings: ObservableObject {
         verboseLog = defaults.object(forKey: Keys.verboseLog) as? Bool ?? false
         emojiEnabled = defaults.object(forKey: Keys.emojiEnabled) as? Bool ?? true
         macrosEnabled = defaults.object(forKey: Keys.macrosEnabled) as? Bool ?? true
-        autocorrectEnabled = defaults.object(forKey: Keys.autocorrectEnabled) as? Bool ?? true
+        autocorrectEnabled = defaults.object(forKey: Keys.autocorrectEnabled) as? Bool ?? false
         skipOnTypo = defaults.object(forKey: Keys.skipOnTypo) as? Bool ?? true
-        emoticonsEnabled = defaults.object(forKey: Keys.emoticonsEnabled) as? Bool ?? true
+        emoticonsEnabled = defaults.object(forKey: Keys.emoticonsEnabled) as? Bool ?? false
         emojiSkinTone = defaults.string(forKey: Keys.emojiSkinTone) ?? "none"
         emojiGender = defaults.string(forKey: Keys.emojiGender) ?? "any"
         emojiIncludeNeutral = defaults.object(forKey: Keys.emojiIncludeNeutral) as? Bool ?? true

@@ -57,3 +57,32 @@ final class SuffixIndexTests: XCTestCase {
         XCTAssertNotNil(index.continuation(after: "about the quarterly "))
     }
 }
+
+final class NGramBoosterTests: XCTestCase {
+    private let history = [
+        "Sounds good to me, thanks!",
+        "Sounds good to me, let's ship it.",
+        "Best regards, Runakash",
+        "Best regards, Runakash",
+        "Looking forward to hearing from you.",
+        "Looking forward to catching up soon.",
+    ]
+
+    func testShortContextBoundaryContinuation() throws {
+        // "Best " is only 5 chars (below SuffixIndex's 10-char minimum),
+        // so NGramBooster handles the short-context continuation when support >= minUnigramSupport,
+        // or 2-word context "Sounds good " with support >= 2.
+        let booster = NGramBooster(documents: history)
+        let hint = try XCTUnwrap(booster.continuation(after: "Sounds good "))
+        XCTAssertTrue(hint.text.hasPrefix("to me,"), hint.text)
+        XCTAssertEqual(hint.support, 2)
+    }
+
+    func testMidWordInlineCompletion() throws {
+        // "Best reg" is 8 chars (< 10 chars for SuffixIndex); NGramBooster completes "ards, Runakash".
+        let booster = NGramBooster(documents: history)
+        let hint = try XCTUnwrap(booster.continuation(after: "Best reg"))
+        XCTAssertEqual(hint.text, "ards, Runakash")
+        XCTAssertEqual(hint.support, 2)
+    }
+}

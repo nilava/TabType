@@ -29,7 +29,7 @@ final class LlamaEngine {
 
     func complete(_ request: CompletionRequest) async -> String? {
         guard let template = models.template, var options = models.decoderOptions else { return nil }
-        let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
+        let text = PromptAssembler(template: template, situationHeader: true, sections: true).assemble(context(for: request))
 
         // Warm-ups only prefill the prompt into the cache.
         if request.warmUpOnly {
@@ -108,7 +108,7 @@ final class LlamaEngine {
         guard let template = models.template else { return [] }
         var request = base ?? CompletionRequest(beforeCursor: before, afterCursor: "", screenContext: "", maxWords: 1)
         request.beforeCursor = before
-        let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
+        let text = PromptAssembler(template: template, situationHeader: true, sections: true).assemble(context(for: request))
         let id = models.inference.beginRequest()
         let words = (try? await models.inference.replacements(before: text, selected: word, after: after,
                                                                 count: 4, requestID: id)) ?? []
@@ -120,17 +120,26 @@ final class LlamaEngine {
         if screen.isEmpty { screen = request.documentStart.trimmingCharacters(in: .whitespacesAndNewlines) }
         screen = SecretSanitizer.sanitize(screen)
         let clipboard = SecretSanitizer.sanitize(request.clipboard)
+        let after = SecretSanitizer.sanitize(request.afterCursor).trimmingCharacters(in: .whitespacesAndNewlines)
         let instructions = request.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let domain = request.domain?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let recentExamples: [String]? = (AppSettings.shared.collectTypingHistory || request.learnsFromWriting)
+            ? WritingStore.shared.recentExamples(forBundleId: request.bundleId, excluding: request.beforeCursor)
+            : nil
         return PromptContext(
             typedText: Self.sanitizeEarlierLines(request.beforeCursor),
+            afterText: after.isEmpty ? nil : after,
             appName: request.appName.isEmpty ? nil : request.appName,
             windowTitle: request.windowTitle.isEmpty ? nil : request.windowTitle,
+            domain: domain.isEmpty ? nil : domain,
             fieldPlaceholder: request.fieldPlaceholder.isEmpty ? nil : request.fieldPlaceholder,
             authorName: request.authorName.isEmpty ? nil : request.authorName,
             customInstructions: instructions.isEmpty ? nil : instructions,
             screenText: screen.isEmpty ? nil : screen,
             isConversation: request.screenIsConversation,
-            clipboard: clipboard.isEmpty ? nil : clipboard)
+            recentWritingExamples: (recentExamples?.isEmpty == false) ? recentExamples : nil,
+            clipboard: clipboard.isEmpty ? nil : clipboard,
+            includeSystemEnvironment: true)
     }
 
     /// Scrubs secrets from earlier lines of the field but leaves the line being typed

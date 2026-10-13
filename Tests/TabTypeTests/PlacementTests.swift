@@ -82,6 +82,40 @@ final class PlacementTests: XCTestCase {
                                    firstLineIndent: 120, maxLines: 3)
         XCTAssertEqual(three.height, one.height * 3, accuracy: 2)
     }
+
+    func testGhosttyConfigParsing() {
+        let config = """
+        # Ghostty terminal config
+        theme = Catppuccin Mocha
+        font-family = "JetBrains Mono"
+        font-size = 14.5
+        """
+        let parsed = AccessibilityBridge.parseGhosttyConfig(config)
+        XCTAssertEqual(parsed.family, "JetBrains Mono")
+        XCTAssertEqual(parsed.size, 14.5)
+    }
+
+    func testVSCodeAndITermFontParsing() {
+        let vscodeJSON = Data(#"{"editor.fontFamily": "'JetBrains Mono', Menlo, monospace", "editor.fontSize": 13.5}"#.utf8)
+        let vscode = AccessibilityBridge.parseVSCodeSettings(vscodeJSON)
+        XCTAssertEqual(vscode.families, ["JetBrains Mono", "Menlo"])
+        XCTAssertEqual(vscode.size, 13.5)
+
+        let iterm = AccessibilityBridge.parseITermFont("JetBrainsMono-Regular 14")
+        XCTAssertEqual(iterm?.name, "JetBrainsMono-Regular")
+        XCTAssertEqual(iterm?.size, 14)
+    }
+
+    @MainActor
+    func testGhostViewBackdropRendering() {
+        let view = GhostTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 40))
+        let font = NSFont.systemFont(ofSize: 14)
+        let laid = view.configure(text: "inline completion", font: font, color: .gray, width: 300,
+                                  firstLineIndent: 12, maxLines: 1,
+                                  backdropColor: NSColor.windowBackgroundColor.withAlphaComponent(0.85))
+        XCTAssertGreaterThan(laid.height, 10)
+        view.displayIfNeeded()
+    }
 }
 
 final class SettleTests: XCTestCase {

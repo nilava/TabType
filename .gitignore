@@ -24,3 +24,6 @@ Sources/**/*.gguf
 
 # Eval sets built from the author's own writing — never committed.
 eval/private/
+
+# Optional local binary frameworks for offline builds
+/Vendor/

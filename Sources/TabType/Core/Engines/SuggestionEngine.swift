@@ -23,7 +23,9 @@ struct CompletionRequest {
     /// Warm-up request: only prefill the prompt, produce nothing.
     var warmUpOnly: Bool = false
     var appName: String = ""
+    var bundleId: String? = nil
     var windowTitle: String = ""
+    var domain: String? = nil
     var fieldPlaceholder: String = ""
     var authorName: String = ""
     /// Writing style + global + per-app custom instructions.

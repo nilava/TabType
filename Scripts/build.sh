@@ -10,16 +10,29 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+# If CommandLineTools is active and MacOSX26.5.sdk is present (which doesn't require
+# Xcode's SwiftUIMacros plugin dylib), prefer it automatically.
+if [ -z "${SDKROOT:-}" ] && [ ! -d "/Applications/Xcode.app" ] && [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk" ]; then
+    export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+fi
+
 CONFIG="${CONFIG:-Debug}"
+LOWER_CONFIG="$(echo "$CONFIG" | tr '[:upper:]' '[:lower:]')"
 DERIVED="$ROOT/.build-xcode"
 PRODUCTS="$DERIVED/Build/Products/$CONFIG"
 
 build_scheme() {
-    xcrun xcodebuild -scheme TabType -configuration "$CONFIG" \
-        -destination 'platform=macOS' \
-        -derivedDataPath "$DERIVED" \
-        -skipPackagePluginValidation build
+    if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+        export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+        xcrun xcodebuild -scheme TabType -configuration "$CONFIG" \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$DERIVED" \
+            -skipPackagePluginValidation build
+    else
+        echo "Xcode.app not found; building with SwiftPM (CommandLineTools)…"
+        swift build -c "$LOWER_CONFIG" --product TabType
+        PRODUCTS="$ROOT/.build/$LOWER_CONFIG"
+    fi
 }
 
 cmd="${1:-app}"
@@ -42,7 +55,7 @@ app)
     # llama.cpp (binary XCFramework via TabTypeKit) — embed and point the
     # executable's rpath at Contents/Frameworks.
     mkdir -p "$APP/Contents/Frameworks"
-    LLAMA_FW="$(find "$PRODUCTS" -maxdepth 2 -name "llama.framework" -type d | head -1)"
+    LLAMA_FW="$(find "$PRODUCTS" "$ROOT/Vendor/llama.xcframework" -maxdepth 3 -name "llama.framework" -type d 2>/dev/null | head -1)"
     if [ -n "$LLAMA_FW" ]; then
         cp -R "$LLAMA_FW" "$APP/Contents/Frameworks/"
         install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/TabType" 2>/dev/null || true
@@ -54,7 +67,11 @@ app)
     # found at runtime via `Bundle.module`, whose accessor searches
     # Bundle.main.resourceURL (Contents/Resources) and the .app root — NOT
     # Contents/MacOS. So they go in Contents/Resources.
-    find "$PRODUCTS" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
+    for BUNDLE_DIR in "$PRODUCTS" "$ROOT/.build/out/Products/$CONFIG"; do
+        if [ -d "$BUNDLE_DIR" ]; then
+            find "$BUNDLE_DIR" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
+        fi
+    done
 
     # Info.plist & Icon
     cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"

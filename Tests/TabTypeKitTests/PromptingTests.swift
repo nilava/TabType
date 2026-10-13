@@ -69,6 +69,75 @@ final class PromptAssemblerTests: XCTestCase {
         let b = assembler.assemble(c)
         XCTAssertTrue(b.hasPrefix(a), "a keystroke must only append to the prompt")
     }
+
+    func testAfterTextIncludedInChatAndSectionsPromptsWhileKeepingTypedTextLast() {
+        let c = PromptContext(
+            typedText: "Please send the ",
+            afterText: "by Friday afternoon so we can review.",
+            appName: "Mail"
+        )
+        for template in [ModelTemplate.chatML, .gemma] {
+            let prompt = PromptAssembler(template: template).assemble(c)
+            XCTAssertTrue(prompt.contains("by Friday afternoon so we can review."))
+            XCTAssertTrue(prompt.hasSuffix("Please send the "))
+        }
+        let sectioned = PromptAssembler(template: .base, sections: true).assemble(c)
+        XCTAssertTrue(sectioned.contains("Background context for the text I'm writing:"))
+        XCTAssertTrue(sectioned.contains("Application: Mail"))
+        XCTAssertTrue(sectioned.contains("Text following the cursor:\nby Friday afternoon so we can review."))
+        XCTAssertTrue(sectioned.hasSuffix("Current draft:\n\nPlease send the "))
+    }
+
+    func testMidLineSplitLayoutSplitsLongBeforeCursorAroundSentenceBoundary() {
+        let longPrefix = String(repeating: "This is an earlier sentence in the document. ", count: 8)
+        let currentPart = "Now I am editing the middle of this "
+        let c = PromptContext(
+            typedText: longPrefix + currentPart,
+            afterText: "sentence with text after the cursor.",
+            appName: "Notes"
+        )
+        let sectioned = PromptAssembler(template: .base, sections: true).assemble(c)
+        XCTAssertTrue(sectioned.contains("Earlier text in this draft:\n"))
+        XCTAssertTrue(sectioned.contains("Text following the cursor:\nsentence with text after the cursor."))
+        XCTAssertTrue(sectioned.hasSuffix("Current line being edited:\n\n" + currentPart))
+    }
+
+    func testSectionedEnvironmentRecentExamplesAndChatFraming() {
+        // 2026-10-12 14:23:45 UTC -> rounds down to 14:15:00
+        let rawDate = Date(timeIntervalSince1970: 1_791_815_025)
+        let roundedDate = Date(timeIntervalSince1970: floor(1_791_815_025.0 / 900.0) * 900.0)
+        XCTAssertEqual(PromptAssembler.formatRoundedDateLine(rawDate),
+                       PromptAssembler.formatRoundedDateLine(roundedDate))
+
+        let c = PromptContext(
+            typedText: "Let's ship the release ",
+            afterText: "before the end of the week.",
+            appName: "Google Chrome",
+            windowTitle: "Pull Request #4",
+            domain: "github.com",
+            fieldPlaceholder: "Leave a comment",
+            authorName: "Akash",
+            customInstructions: "Be concise and technical.",
+            screenText: "Nilava: Looks good to merge.",
+            recentWritingExamples: ["Earlier comment with more than eighty characters to verify recent writing examples appear in the prompt."],
+            clipboard: "https://example.com/docs",
+            includeSystemEnvironment: true,
+            timestamp: rawDate,
+            systemLocales: ["en-US", "en-GB"]
+        )
+
+        let basePrompt = PromptAssembler(template: .base, sections: true).assemble(c)
+        XCTAssertTrue(basePrompt.contains("System locales: en-US, en-GB"))
+        XCTAssertTrue(basePrompt.contains("Author: Akash\nApplication: Google Chrome\nWindow: Pull Request #4\nWebsite: github.com\nField: Leave a comment"))
+        XCTAssertTrue(basePrompt.contains("\n\nWriting preferences: Be concise and technical.\n\n"))
+        XCTAssertTrue(basePrompt.contains("Past writing samples from me:\nEarlier comment with more than eighty characters"))
+        XCTAssertTrue(basePrompt.hasSuffix("Current draft:\n\nLet's ship the release "))
+
+        let chatPrompt = PromptAssembler(template: .chatMLNoThink, sections: true).assemble(c)
+        XCTAssertTrue(chatPrompt.hasPrefix("<|im_start|>user\nBackground context for the text I'm writing:"))
+        XCTAssertTrue(chatPrompt.contains(PromptAssembler.sectionedChatInstruction))
+        XCTAssertTrue(chatPrompt.hasSuffix("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nDraft to continue:\nLet's ship the release "))
+    }
 }
 
 final class TemplateDetectionTests: XCTestCase {

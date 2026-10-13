@@ -205,7 +205,6 @@ private struct KeyRecorder: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             guard recording else { super.keyDown(with: event); return }
-            let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
             let b = KeyBinding(keyCode: Int(event.keyCode),
                                flags: cgFlags(from: event.modifierFlags))
             recording = false

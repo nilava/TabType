@@ -464,7 +464,154 @@ enum AccessibilityBridge {
     /// character before the caret (the text the ghost continues), else the one at it.
     static func textStyle(of element: AXUIElement, caret: Int) -> TextStyle? {
         if caret > 0, let style = textStyle(of: element, at: caret - 1) { return style }
-        return textStyle(of: element, at: caret)
+        if let style = textStyle(of: element, at: caret) { return style }
+        return appConfigTextStyle(bundleId: frontmostBundleId())
+    }
+
+    /// Per-app font configuration fallback for apps whose custom rendering engines
+    /// omit `AXFont` on `AXAttributedStringForRange` (Ghostty, VS Code/Cursor/Windsurf,
+    /// iTerm2, BBEdit): reads font family and size directly from their config/preferences.
+    nonisolated(unsafe) private static var appStyleCache: [String: (at: Date, style: TextStyle?)] = [:]
+
+    static func appConfigTextStyle(bundleId: String?) -> TextStyle? {
+        guard let bundleId else { return nil }
+        if let cached = appStyleCache[bundleId], Date().timeIntervalSince(cached.at) < 30 {
+            return cached.style
+        }
+        let resolved: TextStyle?
+        switch bundleId {
+        case "com.mitchellh.ghostty":
+            resolved = ghosttyTextStyle()
+        case "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders",
+             "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf",
+             "com.google.antigravity":
+            resolved = vscodeForkTextStyle(bundleId: bundleId)
+        case "com.googlecode.iterm2":
+            resolved = iterm2TextStyle()
+        case "com.barebones.bbedit":
+            resolved = bbeditTextStyle()
+        default:
+            return nil
+        }
+        appStyleCache[bundleId] = (Date(), resolved)
+        return resolved
+    }
+
+    private static func ghosttyTextStyle() -> TextStyle? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent(".config/ghostty/config"),
+            home.appendingPathComponent(".config/ghostty/config.ghostty"),
+            home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config"),
+            home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config.ghostty"),
+        ]
+        for url in candidates {
+            guard let contents = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let parsed = parseGhosttyConfig(contents)
+            if parsed.family != nil || parsed.size != nil {
+                return buildMonospaceTextStyle(family: parsed.family, size: parsed.size ?? 13)
+            }
+        }
+        return nil
+    }
+
+    private static let vscodeAppSupportFolders: [String: String] = [
+        "com.microsoft.VSCode": "Code",
+        "com.microsoft.VSCodeInsiders": "Code - Insiders",
+        "com.todesktop.230313mzl4w4u92": "Cursor",
+        "com.exafunction.windsurf": "Windsurf",
+        "com.google.antigravity": "Antigravity",
+    ]
+
+    private static func vscodeForkTextStyle(bundleId: String) -> TextStyle? {
+        guard let folder = vscodeAppSupportFolders[bundleId] else { return nil }
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/\(folder)/User/settings.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let parsed = parseVSCodeSettings(data)
+        guard parsed.families.isEmpty == false || parsed.size != nil else { return nil }
+        let pt = parsed.size ?? 12
+        for candidate in parsed.families {
+            if fontResolves(name: candidate, family: candidate) {
+                return TextStyle(font: resolveFont(name: candidate, family: candidate, size: pt),
+                                 familyKnown: true, color: nil)
+            }
+        }
+        return buildMonospaceTextStyle(family: nil, size: pt)
+    }
+
+    private static func iterm2TextStyle() -> TextStyle? {
+        guard let defaults = UserDefaults(suiteName: "com.googlecode.iterm2"),
+              let bookmarks = defaults.array(forKey: "New Bookmarks") as? [[String: Any]] else { return nil }
+        let defaultGuid = defaults.string(forKey: "Default Bookmark Guid")
+        let profile = bookmarks.first { ($0["Guid"] as? String) == defaultGuid } ?? bookmarks.first
+        guard let fontSpec = profile?["Normal Font"] as? String,
+              let parsed = parseITermFont(fontSpec) else { return nil }
+        return buildMonospaceTextStyle(family: parsed.name, size: parsed.size)
+    }
+
+    private static func bbeditTextStyle() -> TextStyle? {
+        guard let defaults = UserDefaults(suiteName: "com.barebones.bbedit"),
+              let fontName = defaults.string(forKey: "Editor:DefaultFontName"), !fontName.isEmpty else { return nil }
+        return buildMonospaceTextStyle(family: fontName, size: 13)
+    }
+
+    private static func buildMonospaceTextStyle(family: String?, size: CGFloat) -> TextStyle {
+        let known = fontResolves(name: family, family: family)
+        let font = known
+            ? resolveFont(name: family, family: family, size: size)
+            : NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return TextStyle(font: font, familyKnown: known, color: nil)
+    }
+
+    /// Parses `editor.fontFamily` (CSS font-family stack) and `editor.fontSize` from VS Code `settings.json`.
+    static func parseVSCodeSettings(_ data: Data) -> (families: [String], size: CGFloat?) {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], nil) }
+        var families: [String] = []
+        if let rawFamily = obj["editor.fontFamily"] as? String {
+            families = rawFamily.split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            }.filter { !$0.isEmpty && $0.lowercased() != "monospace" }
+        }
+        var size: CGFloat?
+        if let n = (obj["editor.fontSize"] as? NSNumber)?.doubleValue, n >= 6, n <= 96 {
+            size = CGFloat(n)
+        }
+        return (families, size)
+    }
+
+    /// Parses iTerm2's `"Normal Font"` string (e.g. `"JetBrainsMono-Regular 13"` or `"Menlo-Regular 12.5"`).
+    static func parseITermFont(_ spec: String) -> (name: String, size: CGFloat)? {
+        let trimmed = spec.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastSpace = trimmed.lastIndex(of: " ") else { return nil }
+        let name = String(trimmed[..<lastSpace]).trimmingCharacters(in: .whitespaces)
+        let sizeStr = String(trimmed[trimmed.index(after: lastSpace)...]).trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let d = Double(sizeStr), d >= 6, d <= 96 else { return nil }
+        return (name, CGFloat(d))
+    }
+
+    /// Parses `font-family` and `font-size` directives from a Ghostty configuration file.
+    static func parseGhosttyConfig(_ contents: String) -> (family: String?, size: CGFloat?) {
+        var family: String?
+        var size: CGFloat?
+        for rawLine in contents.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+            var value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               (value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            if key == "font-family", !value.isEmpty, family == nil {
+                family = value
+            } else if key == "font-size", let d = Double(value), d >= 6, d <= 96 {
+                size = CGFloat(d)
+            }
+        }
+        return (family, size)
     }
 
     private static func textStyle(of element: AXUIElement, at location: Int) -> TextStyle? {

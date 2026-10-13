@@ -2,7 +2,7 @@ import Foundation
 
 /// Symmetric-delete spelling corrector (Wolf Garbe's SymSpell algorithm).
 /// Builds a delete-index once (in the background) and answers nearest-word lookups.
-final class SymSpell {
+final class SymSpell: @unchecked Sendable {
     private let maxEditDistance: Int
     private let prefixLength: Int
 
@@ -68,9 +68,21 @@ final class SymSpell {
     /// confident suggestion exists.
     func bestSuggestion(_ input: String) -> String? {
         guard isReady else { return nil }
+        // Never autocorrect all-caps or mixed-case acronyms/identifiers ("MCP", "macOS", "GraphQL").
+        if input.dropFirst().contains(where: { $0.isUppercase }) { return nil }
         let word = input.lowercased()
         if words[word] != nil { return nil }               // already valid
         guard word.count >= 3 else { return nil }
+        // Vowel-less consonant runs ("mcp", "llm", "sdk", "grpc", "jwt", "zsh") are
+        // acronyms/initialisms, not prose typos.
+        if !Self.containsVowel(word) { return nil }
+
+        // Short words need stricter distance bounds:
+        // - 3-letter words: only pure transpositions of the same letters ("teh" -> "the", "adn" -> "and"),
+        //   never substitutions ("mcp" -> "map", "api" -> "ape", "cli" -> "ali").
+        // - 4-letter words: at most edit distance 1 (distance 2 replaces half the word).
+        let allowedDistance = word.count <= 4 ? 1 : maxEditDistance
+        let sortedChars = word.count == 3 ? word.sorted() : []
 
         var best: (word: String, dist: Int, freq: Int)?
         var considered = Set<String>()
@@ -78,7 +90,8 @@ final class SymSpell {
             guard let list = deletes[cand] else { continue }
             for candidateWord in list where !considered.contains(candidateWord) {
                 considered.insert(candidateWord)
-                let dist = Self.damerauOSA(word, candidateWord, max: maxEditDistance)
+                if word.count == 3, candidateWord.sorted() != sortedChars { continue }
+                let dist = Self.damerauOSA(word, candidateWord, max: allowedDistance)
                 guard dist >= 0 else { continue }
                 let freq = words[candidateWord] ?? 0
                 if best == nil || dist < best!.dist || (dist == best!.dist && freq > best!.freq) {
@@ -87,6 +100,10 @@ final class SymSpell {
             }
         }
         return best?.word
+    }
+
+    private static func containsVowel(_ word: String) -> Bool {
+        word.contains { "aeiouy".contains($0) }
     }
 
     // MARK: - Delete generation

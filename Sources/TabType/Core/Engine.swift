@@ -311,9 +311,9 @@ final class Engine {
                 guard let self else { return }
                 if on { self.updateAccessoryButton() } else { self.accessory.hide() }
             }
-        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { _ in
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let suggestion = self.currentSuggestion else { return }
+                guard let self, let suggestion = self.currentSuggestion else { return }
                 self.overlay.hide()
                 self.scrollSettle?.cancel()
                 let work = DispatchWorkItem { [weak self] in
@@ -451,6 +451,8 @@ final class Engine {
                 clipboard: self.settings.useClipboardContext ? self.freshClipboardText() : "",
                 speculative: true, maxWords: 1, warmUpOnly: true)
             req.screenIsConversation = policy.transcriptViaAX
+            req.bundleId = bid
+            req.domain = AccessibilityBridge.frontmostURLHost()
             self.applyWriterContext(&req, appName: NSWorkspace.shared.frontmostApplication?.localizedName,
                                     policy: policy)
             let start = Date()
@@ -670,7 +672,8 @@ final class Engine {
             MainActor.assumeIsolated { self.isHotKeyManaged(keyCode: keyCode, flags: flags) }
         }
         HotKeyCenter.shared.onPress = { binding in self.handleHotKey(binding) }
-        HotKeyCenter.shared.onConflict = { binding in
+        HotKeyCenter.shared.onConflict = { [weak self] binding in
+            guard let self else { return }
             // Say so once instead of failing silently: without its hotkey TabType
             // can't act on that key.
             let window = AccessibilityBridge.focusedElement().flatMap { ContextReader.windowRect(of: $0) }
@@ -1569,6 +1572,8 @@ final class Engine {
             maxWords: (PowerMonitor.shared.onBattery && settings.batteryShorterCompletions)
                 ? AppSettings.shorterWords(for: settings.completionLength) : settings.maxWords)
         applyWriterContext(&req, appName: frontApp, policy: policy)
+        req.bundleId = bundleId
+        req.domain = host
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false

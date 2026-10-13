@@ -86,6 +86,54 @@ final class WritingStore: ObservableObject {
     /// Everything stored (for sync between Macs).
     var allDocuments: [Document] { documents }
 
+    /// Selects representative recent writing samples (`>= 80` characters) from the
+    /// user's writing store: the longest + most recent sample from the active app,
+    /// plus up to 2 recent samples across other apps.
+    func recentExamples(forBundleId bundleId: String?, excluding currentText: String) -> [String] {
+        let trimmedCurrent = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pool = documents.reversed().filter { doc in
+            guard doc.text.count >= 80 else { return false }
+            if !trimmedCurrent.isEmpty {
+                if doc.text == trimmedCurrent
+                    || doc.text.hasPrefix(trimmedCurrent)
+                    || trimmedCurrent.hasPrefix(doc.text) {
+                    return false
+                }
+            }
+            return true
+        }.prefix(20)
+
+        var selected: [String] = []
+        var seen = Set<String>()
+        func add(_ text: String) {
+            if seen.insert(text).inserted {
+                selected.append(text)
+            }
+        }
+
+        if let bundleId, !bundleId.isEmpty {
+            let sameApp = pool.filter { $0.bundleId == bundleId }
+            if let longest = sameApp.max(by: { $0.text.count < $1.text.count }) {
+                add(longest.text)
+            }
+            if let mostRecent = sameApp.first {
+                add(mostRecent.text)
+            }
+        }
+
+        var acrossCount = 0
+        for doc in pool where doc.bundleId != bundleId {
+            guard acrossCount < 2 else { break }
+            let before = selected.count
+            add(doc.text)
+            if selected.count > before {
+                acrossCount += 1
+            }
+        }
+
+        return selected
+    }
+
     /// Merge writing from another Mac: union by key, the newer version wins.
     func merge(_ incoming: [Document]) {
         var changed = false
@@ -177,11 +225,12 @@ final class WritingStore: ObservableObject {
     }
 }
 
-/// Suffix index over the writing store, rebuilt in the background after changes.
+/// Suffix index + N-gram booster over the writing store, rebuilt in the background after changes.
 @MainActor
 final class PersonalIndex {
     static let shared = PersonalIndex()
     private(set) var index: SuffixIndex?
+    private(set) var ngramBooster: NGramBooster?
     private var rebuild: Task<Void, Never>?
 
     func start() {
@@ -189,7 +238,19 @@ final class PersonalIndex {
         scheduleRebuild(delay: 0)
     }
 
-    func hint(after typed: String) -> RetrievalHint? { index?.continuation(after: typed) }
+    func hint(after typed: String) -> RetrievalHint? {
+        let suffixHint = index?.continuation(after: typed)
+        let ngramHint = ngramBooster?.continuation(after: typed)
+        if let suffixHint, let ngramHint {
+            // If the exact suffix only happened once in history, but the trailing
+            // n-gram is a habitual phrase (support >= 3), prefer the habitual phrase.
+            if suffixHint.support == 1 && ngramHint.support >= 3 {
+                return ngramHint
+            }
+            return suffixHint
+        }
+        return suffixHint ?? ngramHint
+    }
 
     private func scheduleRebuild(delay: TimeInterval = 5) {
         rebuild?.cancel()
@@ -197,10 +258,13 @@ final class PersonalIndex {
         rebuild = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             guard !Task.isCancelled else { return }
-            let built = await Task.detached(priority: .utility) { SuffixIndex(documents: texts) }.value
+            let (builtSuffix, builtNGrams) = await Task.detached(priority: .utility) {
+                (SuffixIndex(documents: texts), NGramBooster(documents: texts))
+            }.value
             guard !Task.isCancelled else { return }
-            self?.index = built.isEmpty ? nil : built
-            Log.shared.debug("personal index: \(texts.count) documents, \(built.byteCount) bytes")
+            self?.index = builtSuffix.isEmpty ? nil : builtSuffix
+            self?.ngramBooster = builtNGrams.isEmpty ? nil : builtNGrams
+            Log.shared.debug("personal index: \(texts.count) documents, \(builtSuffix.byteCount) bytes, \(builtNGrams.ngramCount) n-grams")
         }
     }
 }

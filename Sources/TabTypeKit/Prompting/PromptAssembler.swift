@@ -4,8 +4,12 @@ import Foundation
 public struct PromptContext: Sendable, Equatable {
     /// The field's text before the caret — what gets continued.
     public var typedText: String
+    /// The field's text immediately after the caret (when editing mid-line or mid-document).
+    public var afterText: String?
     public var appName: String?
     public var windowTitle: String?
+    /// Browser domain/host when typing in a web browser.
+    public var domain: String?
     /// The field's placeholder ("Message Priya") — often names the recipient.
     public var fieldPlaceholder: String?
     /// The writer's name (e.g. from the Mac account) — used as their speaker label
@@ -17,39 +21,62 @@ public struct PromptContext: Sendable, Equatable {
     public var screenText: String?
     /// `screenText` is a conversation with `Name: message` lines.
     public var isConversation: Bool
+    /// Recent examples of the user's writing from `WritingStore`.
+    public var recentWritingExamples: [String]?
     public var clipboard: String?
+    /// Whether to include system environment metadata (15-minute bucketed date/time
+    /// and preferred OS locales).
+    public var includeSystemEnvironment: Bool
+    /// Optional explicit timestamp override (bucketed to 15-minute intervals).
+    public var timestamp: Date?
+    /// Optional explicit preferred locales override.
+    public var systemLocales: [String]?
 
-    public init(typedText: String, appName: String? = nil, windowTitle: String? = nil,
+    public init(typedText: String, afterText: String? = nil, appName: String? = nil,
+                windowTitle: String? = nil, domain: String? = nil,
                 fieldPlaceholder: String? = nil, authorName: String? = nil,
                 customInstructions: String? = nil, screenText: String? = nil,
-                isConversation: Bool = false, clipboard: String? = nil) {
+                isConversation: Bool = false, recentWritingExamples: [String]? = nil,
+                clipboard: String? = nil, includeSystemEnvironment: Bool = false,
+                timestamp: Date? = nil, systemLocales: [String]? = nil) {
         self.typedText = typedText
+        self.afterText = afterText
         self.appName = appName
         self.windowTitle = windowTitle
+        self.domain = domain
         self.fieldPlaceholder = fieldPlaceholder
         self.authorName = authorName
         self.customInstructions = customInstructions
         self.screenText = screenText
         self.isConversation = isConversation
+        self.recentWritingExamples = recentWritingExamples
         self.clipboard = clipboard
+        self.includeSystemEnvironment = includeSystemEnvironment
+        self.timestamp = timestamp
+        self.systemLocales = systemLocales
     }
 }
 
-/// Character budgets per prompt section. The typed text keeps its most recent
-/// characters; screen text keeps its newest lines.
+/// Character and token budgets per prompt section. The typed text keeps its most
+/// recent characters/tokens; screen text keeps its newest lines.
 public struct PromptBudgets: Sendable, Equatable {
     public var typedText = 2000
+    public var afterText = 400
     public var screenText = 1500
     public var clipboard = 400
     public var customInstructions = 600
     /// Sectioned layout: token caps per section and for the whole prompt. When
     /// the sections together exceed `promptTokens`, context sections give up
     /// tokens in proportion to their size; the typed text keeps its share.
-    public var promptTokens = 1024
-    public var typedTokens = 512
-    public var screenTokens = 384
-    public var clipboardTokens = 96
-    public var notesTokens = 128
+    public var promptTokens = 1800
+    public var typedTokens = 360
+    public var afterTokens = 192
+    public var screenTokens = 576
+    public var writingExamplesTokens = 384
+    public var clipboardTokens = 288
+    public var notesTokens = 960
+    public var nearBeforeTokens = 64
+    public var nearAfterTokens = 48
     public init() {}
 }
 
@@ -60,15 +87,20 @@ public struct PromptBudgets: Sendable, Equatable {
 /// next, typed text last) so consecutive keystrokes reuse the cached prompt and a
 /// screen-context refresh only recomputes the tail.
 public struct PromptAssembler: Sendable {
+    /// Ellipsis marker attached to truncated prompt sections.
+    public static let truncationMarker = "…"
+
+    /// Instruction appended to the user turn when using sectioned prompts with chat models.
+    public static let sectionedChatInstruction =
+        "Continue the draft below naturally from the cursor position, matching my tone, language, and style. Output only the continuation without commentary or placeholders."
+
     public var template: ModelTemplate
     public var budgets: PromptBudgets
     /// Base models only: open the document with a one-line "where am I" header
     /// (app — window title — field placeholder).
     public var situationHeader: Bool
-    /// Base models: each part of the prompt in its own delimited section with a
-    /// token budget (Cotypist's prompt structure), instead of plain paragraphs.
-    /// Off by default: with our own delimiters it measured worse on seed-v1
-    /// (recall 58.3 → 55.7%); kept for experiments (`tabtype-eval --sections`).
+    /// Structured prose sections with per-section token budgets and mid-line cursor
+    /// splitting, shared across `.base` and `.chat` models when enabled.
     public var sections: Bool
     /// Tokens in a string (the model's tokenizer); nil estimates from UTF-8 bytes.
     public var tokenCount: (@Sendable (String) -> Int)?
@@ -84,8 +116,11 @@ public struct PromptAssembler: Sendable {
     }
 
     public func assemble(_ context: PromptContext) -> String {
+        if sections {
+            return assembleSections(context)
+        }
         switch template.kind {
-        case .base: return sections ? assembleSections(context) : assembleBase(context)
+        case .base: return assembleBase(context)
         case .chat: return assembleChat(context)
         }
     }
@@ -113,18 +148,19 @@ public struct PromptAssembler: Sendable {
         return join(parts + [typed])
     }
 
-    // MARK: Base models: delimited, token-budgeted sections
+    // MARK: Natural-prose sectioned layout & mid-line cursor split
 
-    /// `<situation>`, `<writer>`, `<clipboard>` and `<screen>` (or `<conversation>`)
-    /// sections, stable to volatile, then the typed text in an open `<text>` (or as
-    /// the next conversation line) so the model continues it.
+    /// Assembles natural-prose context sections ordered from stable to volatile,
+    /// with mid-line split layout when text follows the cursor so the model attends
+    /// to post-cursor text before continuing the active draft.
     private func assembleSections(_ c: PromptContext) -> String {
         func tokens(_ s: String) -> Int { tokenCount?(s) ?? (s.utf8.count + 3) / 4 }
-        /// The part of `s` that fits in `limit` tokens, from its end or its start.
-        func fit(_ s: String, _ limit: Int, keepEnd: Bool) -> String {
+        /// Truncates `s` to `limit` tokens, adding `truncationMarker` at the cut end.
+        func fit(_ s: String, _ limit: Int, keepEnd: Bool, markTruncation: Bool = true) -> String {
             guard limit > 0 else { return "" }
             var text = s
             var n = tokens(text)
+            let wasTruncated = n > limit
             while n > limit, !text.isEmpty {
                 let keep = max(1, Int(Double(text.count) * Double(limit) / Double(n) * 0.95))
                 text = keepEnd ? String(text.suffix(keep)) : String(text.prefix(keep))
@@ -133,43 +169,198 @@ public struct PromptAssembler: Sendable {
             if keepEnd, text.count < s.count, let space = text.firstIndex(where: \.isWhitespace) {
                 text = String(text[text.index(after: space)...])   // start on a word
             }
+            if markTruncation, wasTruncated, text.count < s.count, !text.isEmpty {
+                text = keepEnd ? (Self.truncationMarker + text) : (text + Self.truncationMarker)
+            }
             return text
         }
 
+        func cleanMarked(_ value: String?, limit: Int) -> String? {
+            guard let v = value.map(strip)?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else {
+                return nil
+            }
+            guard v.count > limit else { return v }
+            return String(v.prefix(limit)) + Self.truncationMarker
+        }
+
         let typed = fit(strip(c.typedText), budgets.typedTokens, keepEnd: true)
-        var notes = clean(c.customInstructions, limit: .max).map { fit($0, budgets.notesTokens, keepEnd: false) }
+        var notes = clean(c.customInstructions, limit: budgets.notesTokens).map {
+            fit($0, budgets.notesTokens, keepEnd: false)
+        }
         var clip = clean(c.clipboard, limit: .max).map { fit($0, budgets.clipboardTokens, keepEnd: false) }
-        var screen: String? = c.screenText.map { fit(strip($0).trimmingCharacters(in: .whitespacesAndNewlines),
-                                                     budgets.screenTokens, keepEnd: true) }
-        let header = situationHeader ? situation(c) : nil
+        var after = clean(c.afterText, limit: .max).map { fit($0, budgets.afterTokens, keepEnd: false) }
+        var screen: String? = c.screenText.flatMap { raw in
+            let trimmed = strip(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return fit(trimmed, budgets.screenTokens, keepEnd: true)
+        }
+        let joinedExamples = (c.recentWritingExamples ?? [])
+            .map { strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        var examples: String? = joinedExamples.isEmpty
+            ? nil
+            : fit(joinedExamples, budgets.writingExamplesTokens, keepEnd: false)
 
         // Over the whole-prompt budget: context sections shrink in proportion
         // to their size (newest screen text and the start of notes survive).
-        let fixed = tokens(typed) + (header.map(tokens) ?? 0) + 24
-        let flexible = [notes, clip, screen].map { $0.map(tokens) ?? 0 }
+        let fixed = tokens(typed) + 64
+        let flexible = [notes, screen, examples, clip, after].map { $0.map(tokens) ?? 0 }
         let available = max(0, budgets.promptTokens - fixed)
         let total = flexible.reduce(0, +)
         if total > available, total > 0 {
             let ratio = Double(available) / Double(total)
             notes = notes.map { fit($0, Int(Double(flexible[0]) * ratio), keepEnd: false) }
-            clip = clip.map { fit($0, Int(Double(flexible[1]) * ratio), keepEnd: false) }
-            screen = screen.map { fit($0, Int(Double(flexible[2]) * ratio), keepEnd: true) }
+            screen = screen.map { fit($0, Int(Double(flexible[1]) * ratio), keepEnd: true) }
+            examples = examples.map { fit($0, Int(Double(flexible[2]) * ratio), keepEnd: false) }
+            clip = clip.map { fit($0, Int(Double(flexible[3]) * ratio), keepEnd: false) }
+            after = after.map { fit($0, Int(Double(flexible[4]) * ratio), keepEnd: false) }
         }
 
-        var parts: [String] = []
-        if let header { parts.append("<situation>\(header)</situation>") }
-        if let notes, !notes.isEmpty { parts.append("<writer>\(notes)</writer>") }
-        if let clip, !clip.isEmpty { parts.append("<clipboard>\(clip)</clipboard>") }
-        if let screen, !screen.isEmpty {
-            if c.isConversation {
-                // The author's reply is the next line of the conversation.
-                parts.append("<conversation>\n\(screen)\n\(speaker(c)): \(typed)")
-                return parts.joined(separator: "\n")
-            }
-            parts.append("<screen>\n\(screen)\n</screen>")
+        var envLines: [String] = []
+        if c.includeSystemEnvironment || c.timestamp != nil {
+            let rawDate = c.timestamp ?? Date()
+            envLines.append(Self.formatRoundedDateLine(rawDate))
         }
-        parts.append("<text>\n\(typed)")
-        return parts.joined(separator: "\n")
+        if let locales = c.systemLocales ?? (c.includeSystemEnvironment ? Locale.preferredLanguages : nil),
+           !locales.isEmpty {
+            envLines.append("System locales: " + locales.joined(separator: ", "))
+        }
+        let appRaw = clean(c.appName, limit: 100)
+        let fieldRaw = clean(c.fieldPlaceholder, limit: .max)
+        if let name = cleanMarked(c.authorName, limit: 100) {
+            envLines.append("Author: \(name)")
+        }
+        if let app = cleanMarked(c.appName, limit: 100) {
+            envLines.append("Application: \(app)")
+        }
+        if let winRaw = clean(c.windowTitle, limit: .max),
+           winRaw != appRaw, winRaw != fieldRaw,
+           let win = cleanMarked(c.windowTitle, limit: 100) {
+            envLines.append("Window: \(win)")
+        }
+        if let domRaw = clean(c.domain, limit: .max),
+           domRaw != fieldRaw,
+           let dom = cleanMarked(c.domain, limit: 100) {
+            envLines.append("Website: \(dom)")
+        }
+        if let field = cleanMarked(c.fieldPlaceholder, limit: 100) {
+            envLines.append("Field: \(field)")
+        } else if envLines.isEmpty, situationHeader, let header = situation(c) {
+            envLines.append("Application: \(header)")
+        }
+
+        var contextSections: [String] = []
+        let hasAnyContext = !envLines.isEmpty
+            || (notes?.isEmpty == false)
+            || (screen?.isEmpty == false)
+            || (examples?.isEmpty == false)
+            || (clip?.isEmpty == false)
+            || (after?.isEmpty == false)
+
+        if hasAnyContext || template.kind == .chat {
+            var preamble = "Background context for the text I'm writing:"
+            if !envLines.isEmpty {
+                preamble += "\n\n" + envLines.joined(separator: "\n")
+            }
+            contextSections.append(preamble)
+        }
+        if let notes, !notes.isEmpty {
+            contextSections.append("Writing preferences: \(notes)")
+        }
+        if let screen, !screen.isEmpty {
+            contextSections.append("Visible text on screen:\n\(screen)")
+        }
+        if let examples, !examples.isEmpty {
+            contextSections.append("Past writing samples from me:\n\(examples)")
+        }
+        if let clip, !clip.isEmpty {
+            contextSections.append("Copied to clipboard:\n\(clip)")
+        }
+
+        // Mid-line cursor split: when text follows the cursor and `typed` exceeds
+        // `nearBeforeTokens`, split `typed` around a sentence/word boundary into
+        // `farBefore` + `nearBefore` so both `farBefore` and `nearAfter` sit in the
+        // stable prefix and decoding continues seamlessly from `nearBefore`.
+        let nearBeforeBudget = budgets.nearBeforeTokens
+        let finalTyped: String
+        let isMidLineSplit: Bool
+        if let after, !after.isEmpty {
+            if tokens(typed) > nearBeforeBudget,
+               let (farBefore, nearBefore) = Self.splitMidLine(typed, nearTokens: nearBeforeBudget, tokens: tokens) {
+                let nearAfter = fit(after, budgets.nearAfterTokens, keepEnd: false)
+                contextSections.append("Earlier text in this draft:\n\(farBefore)")
+                contextSections.append("Text following the cursor:\n\(nearAfter)")
+                finalTyped = nearBefore
+                isMidLineSplit = true
+            } else {
+                contextSections.append("Text following the cursor:\n\(after)")
+                finalTyped = typed
+                isMidLineSplit = false
+            }
+        } else {
+            finalTyped = typed
+            isMidLineSplit = false
+        }
+
+        switch template.kind {
+        case .base:
+            guard hasAnyContext else { return finalTyped }
+            let leadIn = isMidLineSplit
+                ? "Current line being edited:\n\n"
+                : "Current draft:\n\n"
+            contextSections.append(leadIn + finalTyped)
+            return contextSections.joined(separator: "\n\n")
+
+        case .chat:
+            contextSections.append(Self.sectionedChatInstruction)
+            let userTurn = contextSections.joined(separator: "\n\n")
+            let assistantLeadIn = isMidLineSplit
+                ? "Current section to continue:\n"
+                : "Draft to continue:\n"
+            return template.userPrefix + userTurn + template.userSuffix
+                + template.assistantPrefix + assistantLeadIn + finalTyped
+        }
+    }
+
+    /// Formats the current date and time bucketed to 15-minute intervals (`900` seconds)
+    /// so the prompt prefix stays stable across minute ticks for KV cache reuse.
+    public static func formatRoundedDateLine(_ date: Date) -> String {
+        let interval: TimeInterval = 900.0
+        let rounded = Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / interval) * interval)
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.dateStyle = .none
+        timeFormatter.timeStyle = .short
+        return "Current date and time: \(dateFormatter.string(from: rounded)), \(timeFormatter.string(from: rounded))"
+    }
+
+    /// Splits `typed` into `(farBefore, nearBefore)` where `nearBefore` is at most
+    /// `nearTokens` tokens and starts after a sentence/line/word boundary.
+    private static func splitMidLine(_ typed: String, nearTokens: Int, tokens: (String) -> Int) -> (String, String)? {
+        let approxChars = max(80, nearTokens * 4)
+        guard typed.count > approxChars else { return nil }
+        let rawCut = typed.index(typed.endIndex, offsetBy: -approxChars)
+        let searchEnd = typed.index(typed.endIndex, offsetBy: -min(32, typed.count / 2))
+        guard rawCut < searchEnd else { return nil }
+        let window = typed[rawCut..<searchEnd]
+        let splitIdx: String.Index
+        if let punct = window.lastIndex(where: { ".!?\n".contains($0) }) {
+            var next = typed.index(after: punct)
+            while next < typed.endIndex, typed[next] == " " { next = typed.index(after: next) }
+            splitIdx = next
+        } else if let ws = window.firstIndex(where: \.isWhitespace) {
+            splitIdx = typed.index(after: ws)
+        } else {
+            return nil
+        }
+        let farBefore = String(typed[..<splitIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let nearBefore = String(typed[splitIdx...])
+        guard !farBefore.isEmpty, !nearBefore.isEmpty, tokens(nearBefore) <= nearTokens + 16 else { return nil }
+        return (farBefore, nearBefore)
     }
 
     /// Most lines read "Speaker: message".
@@ -199,6 +390,9 @@ public struct PromptAssembler: Sendable {
         }
         if let clip = clean(c.clipboard, limit: budgets.clipboard) {
             user.append("Text I just copied:\n\(clip)")
+        }
+        if let after = clean(c.afterText, limit: budgets.afterText) {
+            user.append("Text immediately after my cursor (bridge smoothly into it without repeating it):\n\(after)")
         }
         return template.userPrefix + user.joined(separator: "\n\n") + template.userSuffix
             + template.assistantPrefix + typedText(c)

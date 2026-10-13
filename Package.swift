@@ -1,5 +1,39 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let hasLocalLlama = FileManager.default.fileExists(
+    atPath: packageDir.appendingPathComponent("Vendor/llama.xcframework").path
+)
+let hasFullXcode = FileManager.default.fileExists(atPath: "/Applications/Xcode.app")
+
+let llamaTarget: Target = hasLocalLlama
+    ? .binaryTarget(name: "llama", path: "Vendor/llama.xcframework")
+    : .binaryTarget(
+        name: "llama",
+        url: "https://github.com/ggml-org/llama.cpp/releases/download/b11490/llama-b11490-xcframework.zip",
+        checksum: "bc19f561ae2504cb2b3e7b189f44c8a81f8aa0fd84f70b9e81c2ff92a98a086c"
+    )
+
+var appResources: [Resource] = [
+    .process("Resources/emoji.json"),
+    .process("Resources/frequency_dictionary_en.txt"),
+    .process("Resources/frequency_dictionary_es.txt"),
+    .process("Resources/frequency_dictionary_fr.txt"),
+    .process("Resources/frequency_dictionary_de.txt"),
+    .process("Resources/frequency_dictionary_it.txt"),
+    .process("Resources/frequency_dictionary_pt.txt"),
+    .process("Resources/frequency_dictionary_hi.txt"),
+    .process("Resources/frequency_dictionary_bn.txt"),
+    .process("Resources/frequency_dictionary_ta.txt"),
+    .process("Resources/frequency_dictionary_te.txt"),
+    .process("Resources/frequency_dictionary_ml.txt"),
+    .process("Resources/frequency_dictionary_ur.txt"),
+]
+if hasFullXcode {
+    appResources.insert(.process("Resources/Assets.xcassets"), at: 0)
+}
 
 let package = Package(
     name: "TabType",
@@ -11,13 +45,9 @@ let package = Package(
         .executable(name: "tabtype-eval", targets: ["TabTypeEval"]),
     ],
     targets: [
-        // llama.cpp (Metal) — the v2 inference engine. Pinned release XCFramework;
-        // bump the tag and checksum together (`swift package compute-checksum`).
-        .binaryTarget(
-            name: "llama",
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b11490/llama-b11490-xcframework.zip",
-            checksum: "bc19f561ae2504cb2b3e7b189f44c8a81f8aa0fd84f70b9e81c2ff92a98a086c"
-        ),
+        // llama.cpp (Metal) — the v2 inference engine. Pinned release XCFramework
+        // (or local Vendor/llama.xcframework when building offline).
+        llamaTarget,
         // v2 core: inference runtime, decoder, prompting, evaluation. Shared by the
         // app and the eval CLI.
         .target(
@@ -37,22 +67,8 @@ let package = Package(
             name: "TabType",
             dependencies: ["TabTypeKit"],
             path: "Sources/TabType",
-            resources: [
-                .process("Resources/Assets.xcassets"),
-                .process("Resources/emoji.json"),
-                .process("Resources/frequency_dictionary_en.txt"),
-                .process("Resources/frequency_dictionary_es.txt"),
-                .process("Resources/frequency_dictionary_fr.txt"),
-                .process("Resources/frequency_dictionary_de.txt"),
-                .process("Resources/frequency_dictionary_it.txt"),
-                .process("Resources/frequency_dictionary_pt.txt"),
-                .process("Resources/frequency_dictionary_hi.txt"),
-                .process("Resources/frequency_dictionary_bn.txt"),
-                .process("Resources/frequency_dictionary_ta.txt"),
-                .process("Resources/frequency_dictionary_te.txt"),
-                .process("Resources/frequency_dictionary_ml.txt"),
-                .process("Resources/frequency_dictionary_ur.txt"),
-            ]
+            exclude: hasFullXcode ? [] : ["Resources/Assets.xcassets"],
+            resources: appResources
         ),
         .testTarget(
             name: "TabTypeTests",
