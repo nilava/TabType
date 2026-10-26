@@ -128,4 +128,36 @@ final class PartialTypoGateTests: XCTestCase {
         // Jargon already on screen: "kubectl" appeared earlier.
         XCTAssertFalse(Engine.partialMayBeTypo("kube", context: "run kubectl apply\nthen kube"))
     }
+
+    // MARK: - Autocorrect across German + English (real dictionaries)
+
+    private func corrected(_ word: String, language: String = "de") async -> String? {
+        await withCheckedContinuation { cont in
+            SpellChecker.shared.correct(word, language: language) { cont.resume(returning: $0) }
+        }
+    }
+
+    /// Dictionaries build in the background; wait until a known typo gets fixed.
+    private func waitForDictionaries() async throws {
+        for _ in 0..<120 where await corrected("apears") == nil {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+    }
+
+    func testAutocorrectLeavesNamesAndBothLanguagesAlone() async throws {
+        try await waitForDictionaries()
+        // was "typist" / "robot"; an English word under the German setting; a German word
+        for word in ["cotypist", "roblox", "because", "vielleicht"] {
+            let fixed = await corrected(word)
+            XCTAssertNil(fixed, word)
+        }
+    }
+
+    func testAutocorrectStillFixesTypos() async throws {
+        try await waitForDictionaries()
+        for (typo, word) in [("somtimes", "sometimes"), ("apears", "appears"), ("entschuldiung", "entschuldigung")] {
+            let fixed = await corrected(typo)
+            XCTAssertEqual(fixed, word, typo)
+        }
+    }
 }

@@ -33,20 +33,28 @@ final class SpellChecker: @unchecked Sendable {
     }
 
     /// A confident correction for `word` in `language`, on the main actor, or nil.
+    /// English is consulted too (as in `isPlausibleContinuation`): a word known in
+    /// either dictionary is left alone, otherwise the closer correction wins (ties
+    /// go to English). Two-letter fixes only for long words — at 8 letters or less
+    /// they turn names into other words ("cotypist" → "typist", "roblox" → "robot").
     func correct(_ word: String, language: String,
                  then completion: @escaping @MainActor (String?) -> Void) {
         let lang = normalized(language)
+        let langs = lang == "en" ? ["en"] : ["en", lang]
         queue.async { [weak self] in
             guard let self else { return }
-            let sym = self.ensureLoaded(lang)
-            guard let sym, sym.isReady,
-                  word.count >= 3, word.allSatisfy({ $0.isLetter }),
-                  let fixed = sym.bestSuggestion(word),
-                  fixed.lowercased() != word.lowercased() else {
+            let dicts = langs.compactMap { self.ensureLoaded($0) }.filter(\.isReady)
+            // All of them, or none: with only one loaded, a word from the other
+            // language would look like a typo.
+            guard dicts.count == langs.count, word.count >= 3, word.allSatisfy({ $0.isLetter }),
+                  !dicts.contains(where: { $0.isKnown(word) }),
+                  let best = dicts.compactMap({ $0.bestMatch(word) }).min(by: { $0.distance < $1.distance }),
+                  best.distance <= (word.count >= 9 ? 2 : 1),
+                  best.word.lowercased() != word.lowercased() else {
                 Task { @MainActor in completion(nil) }
                 return
             }
-            let result = Self.applyCase(of: word, to: fixed)
+            let result = Self.applyCase(of: word, to: best.word)
             Task { @MainActor in completion(result) }
         }
     }

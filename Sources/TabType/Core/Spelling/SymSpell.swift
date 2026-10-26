@@ -64,9 +64,15 @@ final class SymSpell {
         return best.word
     }
 
+    /// Whether `word` (any case) is in this dictionary.
+    func isKnown(_ word: String) -> Bool { words[word.lowercased()] != nil }
+
     /// Best correction for `input`, or nil if it's already a known word or no
     /// confident suggestion exists.
-    func bestSuggestion(_ input: String) -> String? {
+    func bestSuggestion(_ input: String) -> String? { bestMatch(input)?.word }
+
+    /// `bestSuggestion` plus its edit distance, so callers can weigh dictionaries.
+    func bestMatch(_ input: String) -> (word: String, distance: Int)? {
         guard isReady else { return nil }
         let word = input.lowercased()
         if words[word] != nil { return nil }               // already valid
@@ -86,7 +92,7 @@ final class SymSpell {
                 }
             }
         }
-        return best?.word
+        return best.map { ($0.word, $0.dist) }
     }
 
     // MARK: - Delete generation
