@@ -1463,9 +1463,13 @@ final class Engine {
         if policy.terminalAgentOnly {
             guard let typed = TerminalPrompt.input(before: ctx.input) else {
                 if currentSuggestion != nil { clearSuggestion() }
-                Log.shared.debug("predict skipped: no agent prompt detected in the terminal")
+                Log.shared.debug("predict skipped: no agent prompt detected in the terminal "
+                                 + "(caret line: \"\(ctx.input.split(separator: "\n", omittingEmptySubsequences: false).last ?? "")\")")
                 return
             }
+            // The policy turns screen OCR off because the buffer above is the
+            // context — so hand that buffer to the model before narrowing the input.
+            screenContext = TerminalPrompt.conversation(before: ctx.input, cap: screenCap)
             ctx.input = typed
             ctx.afterCursor = ""
             ctx.hasInput = !typed.isEmpty
@@ -1803,7 +1807,11 @@ final class Engine {
             let fitKey = [AccessibilityBridge.frontmostBundleId() ?? "?",
                           "\(Int(caretRect.height.rounded()))",
                           "\(Int(elementFrame?.minX ?? 0)),\(Int(elementFrame?.minY ?? 0)),\(Int(elementFrame?.width ?? 0))"].joined(separator: "|")
-            var base = style?.font ?? NSFont.systemFont(ofSize: max(11, caretRect.height * policy.fontSizeRatio))
+            // Terminals don't report AXFont; they render monospaced, with a line
+            // height of ~1.25× the point size (SF Mono 12 pt → 15 pt rows).
+            var base = style?.font ?? (policy.terminalAgentOnly
+                ? NSFont.monospacedSystemFont(ofSize: max(10, caretRect.height * 0.8), weight: .regular)
+                : NSFont.systemFont(ofSize: max(11, caretRect.height * policy.fontSizeRatio)))
             // Size-only reports (Chromium): the family measured for this field.
             if let style, !style.familyKnown, let family = fieldFamily[fitKey],
                let matched = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5,
@@ -1909,7 +1917,9 @@ final class Engine {
                     return await GhostAppearanceProbe.hasTextPixels(in: strip)
                 }
                 var target = anchored
-                var occupied = trustedCaret ? false : await checkOccupied(target)
+                // Terminal agent prompts: the agent draws its own block cursor right of
+                // the caret, which always reads as "occupied" — the line is empty there.
+                var occupied = (trustedCaret || policy.terminalAgentOnly) ? false : await checkOccupied(target)
                 guard self.currentSuggestion == suggestion else { return }   // stale
                 if occupied == true {
                     try? await Task.sleep(nanoseconds: 250_000_000)
@@ -1976,7 +1986,9 @@ final class Engine {
                 }
 
                 // No style over AX: the field's measured font/size/baseline/colour.
-                if self.settings.useScreenshotAppearance {
+                // Not in terminals: none of the bundled families is the terminal's
+                // monospace, so the fit lands on a narrower proportional face.
+                if self.settings.useScreenshotAppearance, !policy.terminalAgentOnly {
                     let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
                     if let fit = await FieldFitCache.shared.fit(caret: target, fieldFrame: elementFrame, key: fitKey,
                                                                 lineText: lineText, verbose: self.settings.verboseLog) {

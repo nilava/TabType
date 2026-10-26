@@ -147,6 +147,88 @@ final class TerminalPromptTests: XCTestCase {
         XCTAssertEqual(TerminalPrompt.input(before: "some output\n› refactor the parser so"), "refactor the parser so")
     }
 
+    func testRuledPromptClaudeCodeAndHermes() {
+        let claude = "● Done.\n\n────────────────────────────────────────\n❯ can you also fix the tes"
+        XCTAssertEqual(TerminalPrompt.input(before: claude), "can you also fix the tes")
+        // What Terminal.app actually reports for Claude Code: a no-break space after ❯.
+        let claudeNBSP = "──────────────────────────────\n❯\u{00A0}her is a screenshot a"
+        XCTAssertEqual(TerminalPrompt.input(before: claudeNBSP), "her is a screenshot a")
+        let hermes = "Welcome to Hermes Agent!\n\n─────────────────────────\n❯ research this topic and"
+        XCTAssertEqual(TerminalPrompt.input(before: hermes), "research this topic and")
+    }
+
+    func testRuleMustBeDirectlyAbove() {
+        // A shell "❯" prompt with ordinary output above stays silent.
+        XCTAssertNil(TerminalPrompt.input(before: "build ok\n❯ git sta"))
+        XCTAssertNil(TerminalPrompt.input(before: "──────────────────\nsome output\n❯ git sta"))
+        // A few dashes inside ordinary output aren't a separator.
+        XCTAssertNil(TerminalPrompt.input(before: "step ── done\n❯ git sta"))
+    }
+
+    func testConversationAboveThePrompt() {
+        let screen = "● Build failed: 3 tests\n\n────────────────────\n❯\u{00A0}can you check why the"
+        XCTAssertEqual(TerminalPrompt.conversation(before: screen), "● Build failed: 3 tests")
+        XCTAssertEqual(TerminalPrompt.conversation(before: "abcdef\n❯ x", cap: 3), "def")
+    }
+
+    func testTrailingSpaceReadsAsNextRow() {
+        // After Space, Terminal.app trims the row and the caret sits on the next one.
+        let screen = "──────────────────────────────\n❯\u{00A0}the font is a bit\n"
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "the font is a bit ")
+    }
+
+    func testWrappedPrompt() {
+        let screen = "──────────────────────────────\n❯\u{00A0}after i press space the text still disappears and the font is\n  to small the one i am typ"
+        XCTAssertEqual(TerminalPrompt.input(before: screen),
+                       "after i press space the text still disappears and the font is to small the one i am typ")
+        // Indented output under a shell line isn't a prompt.
+        XCTAssertNil(TerminalPrompt.input(before: "$ make\n  compiling foo"))
+    }
+
+    func testOpenCodeHeavyBarPrompt() {
+        // Captured from opencode 1.18 in tmux.
+        let pad = String(repeating: " ", count: 18)
+        let screen = "\(pad)▀▀▀▀ █▀▀▀ ▀▀▀▀\n\(pad)┃\n\(pad)┃  can you check why the build"
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "can you check why the build")
+        let wrapped = "\(pad)┃\n\(pad)┃  a long prompt that wraps\n\(pad)┃  onto a second row"
+        XCTAssertEqual(TerminalPrompt.input(before: wrapped), "a long prompt that wraps onto a second row")
+        // After Space, the caret jumps to the "┃" padding row below.
+        XCTAssertEqual(TerminalPrompt.input(before: "\(pad)┃\n\(pad)┃  check the\n"), "check the ")
+        XCTAssertEqual(TerminalPrompt.conversation(before: "Build failed\n\(pad)┃\n\(pad)┃  check the"), "Build failed")
+    }
+
+    func testKimiBoxIsNotMistakenForAPane() {
+        let screen = " ╭──────────────────────────────╮\n │ >                            │\n ╰──────────────────────────────╯\n x\n ╭──────────────────────────────╮\n │ > can you"
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "can you")
+    }
+
+    /// Two tmux panes side by side, border at column 20.
+    private func split(_ left: [String], _ right: [String]) -> [String] {
+        zip(left, right).map { $0.padding(toLength: 20, withPad: " ", startingAt: 0) + "│" + $1 }
+    }
+
+    func testTmuxSplitCaretInRightPane() {
+        var rows = split(["left output", "more left", "", "❯ hello"],
+                         ["● Build failed", "", "──────────────────────", ""])
+        rows[3] += "❯ can you check"   // the caret row ends at the caret
+        let screen = rows.joined(separator: "\n")
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "can you check")
+        XCTAssertEqual(TerminalPrompt.conversation(before: screen), "● Build failed")
+    }
+
+    func testTmuxSplitCaretInLeftPane() {
+        let above = split(["● Tests timed out", "", "────────────────────"],
+                          ["$ npm run dev", "server on :3000", "$ "])
+        let screen = (above + ["❯ why did the"]).joined(separator: "\n")
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "why did the")
+        XCTAssertEqual(TerminalPrompt.conversation(before: screen), "● Tests timed out")
+    }
+
+    func testHermesTitledRule() {
+        let screen = "──────────────── i want you to reserch about trending roblox… ─\n❯ set a reminder for"
+        XCTAssertEqual(TerminalPrompt.input(before: screen), "set a reminder for")
+    }
+
     func testShellPromptsAreNotAgents() {
         XCTAssertNil(TerminalPrompt.input(before: "nilava@mac TabType % git sta"))
         XCTAssertNil(TerminalPrompt.input(before: "$ ls -la"))
