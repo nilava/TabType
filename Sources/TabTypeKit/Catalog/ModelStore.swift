@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// Where model files live and what's installed.
@@ -12,12 +13,40 @@ public struct ModelStore: Sendable {
             .appendingPathComponent("TabType/Models", isDirectory: true)
     }
 
-    public func url(for entry: ModelCatalog.Entry) -> URL {
-        directory.appendingPathComponent(entry.fileName)
+    public func url(for entry: ModelCatalog.Entry) throws -> URL {
+        try fileURL(named: entry.fileName)
+    }
+
+    /// Catalog entries are mutable and may come from the network, so enforce this
+    /// at every filesystem consumer rather than only while decoding the catalog.
+    private func fileURL(named name: String) throws -> URL {
+        guard directory.isFileURL, !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains("\\"),
+              !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw ModelDownloadError.unsafeFileName
+        }
+        let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let file = root.appendingPathComponent(name)
+        // Do not follow even dangling symlinks, or treat directories/devices as
+        // model files. The same check applies to resumable partial downloads.
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+           attributes[.type] as? FileAttributeType != .typeRegular {
+            throw ModelDownloadError.unsafeFileName
+        }
+        guard file.resolvingSymlinksInPath().deletingLastPathComponent() == root else {
+            throw ModelDownloadError.unsafeFileName
+        }
+        return file
+    }
+
+    public func partialURL(for entry: ModelCatalog.Entry) throws -> URL {
+        _ = try url(for: entry)
+        return try fileURL(named: entry.fileName + ".part")
     }
 
     public func isInstalled(_ entry: ModelCatalog.Entry) -> Bool {
-        guard let size = try? url(for: entry).resourceValues(forKeys: [.fileSizeKey]).fileSize else { return false }
+        guard let file = try? url(for: entry),
+              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return false }
         return Int64(size) == entry.sizeBytes
     }
 
@@ -26,7 +55,10 @@ public struct ModelStore: Sendable {
     public func customModels(excluding catalog: ModelCatalog) -> [URL] {
         let known = Set(catalog.models.map(\.fileName))
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { $0.pathExtension == "gguf" && !known.contains($0.lastPathComponent) }
+        return files.filter {
+            $0.pathExtension == "gguf" && !known.contains($0.lastPathComponent)
+                && (try? fileURL(named: $0.lastPathComponent)) != nil
+        }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
@@ -38,7 +70,7 @@ public struct ModelStore: Sendable {
     }
 
     public func delete(_ entry: ModelCatalog.Entry) throws {
-        let file = url(for: entry)
+        let file = try url(for: entry)
         if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
     }
 }
@@ -47,12 +79,14 @@ public enum ModelDownloadError: Error, CustomStringConvertible, Equatable {
     case httpStatus(Int)
     case sizeMismatch(expected: Int64, actual: Int64)
     case checksumMismatch
+    case unsafeFileName
 
     public var description: String {
         switch self {
         case .httpStatus(let code): return "server returned HTTP \(code)"
         case .sizeMismatch(let e, let a): return "downloaded \(a) bytes, expected \(e)"
         case .checksumMismatch: return "file checksum does not match the catalog"
+        case .unsafeFileName: return "model filename must identify a regular file inside the model folder"
         }
     }
 }
@@ -71,14 +105,15 @@ public final class ModelDownloader: @unchecked Sendable {
 
     public func download(_ entry: ModelCatalog.Entry, into store: ModelStore,
                          progress: Progress? = nil) async throws -> URL {
-        let destination = store.url(for: entry)
+        let destination = try store.url(for: entry)
         if store.isInstalled(entry) { return destination }
+        let partial = try store.partialURL(for: entry)
         try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
-        let partial = destination.appendingPathExtension("part")
 
         var attempt = 0
         while true {
             do {
+                _ = try store.partialURL(for: entry)
                 try await transfer(entry.url, to: partial, expected: entry.sizeBytes, progress: progress)
                 break
             } catch let error as ModelDownloadError {
@@ -91,6 +126,7 @@ public final class ModelDownloader: @unchecked Sendable {
             }
         }
 
+        _ = try store.partialURL(for: entry)
         let size = (try? FileManager.default.attributesOfItem(atPath: partial.path)[.size] as? Int64) ?? 0
         guard size == entry.sizeBytes else {
             try? FileManager.default.removeItem(at: partial)
@@ -100,6 +136,7 @@ public final class ModelDownloader: @unchecked Sendable {
             try? FileManager.default.removeItem(at: partial)
             throw ModelDownloadError.checksumMismatch
         }
+        _ = try store.url(for: entry)
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }
@@ -108,10 +145,19 @@ public final class ModelDownloader: @unchecked Sendable {
     }
 
     private func transfer(_ url: URL, to partial: URL, expected: Int64, progress: Progress?) async throws {
-        if !FileManager.default.fileExists(atPath: partial.path) {
-            FileManager.default.createFile(atPath: partial.path, contents: nil)
+        // A final-component symlink must not be followed even if it is swapped
+        // in after the path check, while the network request is pending.
+        let descriptor = open(partial.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard descriptor >= 0 else {
+            if errno == ELOOP { throw ModelDownloadError.unsafeFileName }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        let handle = try FileHandle(forWritingTo: partial)
+        var attributes = stat()
+        guard fstat(descriptor, &attributes) == 0, attributes.st_mode & S_IFMT == S_IFREG else {
+            close(descriptor)
+            throw ModelDownloadError.unsafeFileName
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
         var offset = try handle.seekToEnd()
         guard Int64(offset) < expected else { return }

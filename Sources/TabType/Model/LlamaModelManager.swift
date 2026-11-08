@@ -57,7 +57,6 @@ final class LlamaModelManager: ObservableObject {
 
     func isInstalled(_ id: String) -> Bool {
         _ = storageRevision
-        if id.hasPrefix(Self.customPrefix) { return true }
         return entry(id: id).map(store.isInstalled) ?? false
     }
 
@@ -85,7 +84,8 @@ final class LlamaModelManager: ObservableObject {
         if isInstalled(initial) {
             load(initial)
         } else if let entry = entry(id: selectedID), !selectedID.hasPrefix(Self.customPrefix),
-                  FileManager.default.fileExists(atPath: store.url(for: entry).appendingPathExtension("part").path) {
+                  let partial = try? store.partialURL(for: entry),
+                  FileManager.default.fileExists(atPath: partial.path) {
             // A download of the selected model was interrupted (quit, crash,
             // relaunch): pick it up where it stopped.
             Log.shared.info("v2 engine: resuming the interrupted download of \(selectedID)")
@@ -149,9 +149,13 @@ final class LlamaModelManager: ObservableObject {
             status = .failed(id: id, message: "Unknown model")
             return
         }
-        let path = id.hasPrefix(Self.customPrefix)
-            ? store.directory.appendingPathComponent(entry.fileName).path
-            : store.url(for: entry).path
+        let path: String
+        do {
+            path = try store.url(for: entry).path
+        } catch {
+            status = .failed(id: id, message: "Couldn't load model: \(error)")
+            return
+        }
         status = .loading(id: id)
         Task {
             let start = Date()
