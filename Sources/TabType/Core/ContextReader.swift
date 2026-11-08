@@ -51,7 +51,7 @@ enum ContextReader {
         let parts = full.map { AccessibilityBridge.split($0, caretUTF16: focused.flatMap(AccessibilityBridge.caretOffset)) }
 
         var input = ""
-        if let before = parts?.before, !before.isEmpty {
+        if let before = parts?.before {
             input = String(before.suffix(inputChars))
         } else {
             input = String(fallbackBuffer.suffix(inputChars))

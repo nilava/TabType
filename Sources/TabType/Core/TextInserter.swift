@@ -26,6 +26,7 @@ enum TextInserter {
     /// workarounds (`AppPolicy.insertion`).
     @MainActor
     static func insert(_ text: String, policy: AppPolicy) {
+        guard let origin = ContentAccessPolicy.current() else { return }
         let o = policy.insertion
         let t = transformed(text, options: o)
         guard !t.isEmpty else { return }
@@ -40,6 +41,7 @@ enum TextInserter {
             let rest = String(t[firstEnd...])
             if !rest.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                    guard ContentAccessPolicy.isCurrent(origin) else { return }
                     paste(rest, matchStyle: o.pasteMatchStyle, backspaceAfter: o.backspaceAfterPaste)
                 }
             }
@@ -57,7 +59,7 @@ enum TextInserter {
     /// Insert `text` using the strategy chosen for the app + payload.
     @MainActor
     static func insert(_ text: String, strategy: InsertionStrategy) {
-        guard !text.isEmpty else { return }
+        guard ContentAccessPolicy.current() != nil, !text.isEmpty else { return }
         let resolved = resolve(strategy, for: text)
         switch resolved {
         case .paste: paste(text)
@@ -81,6 +83,7 @@ enum TextInserter {
     /// ⌘V, then restore the user's clipboard shortly after.
     @MainActor
     private static func paste(_ text: String, matchStyle: Bool = false, backspaceAfter: Bool = false) {
+        guard let origin = ContentAccessPolicy.current() else { return }
         let pb = NSPasteboard.general
         let saved = pb.pasteboardItems?.map { item -> [NSPasteboard.PasteboardType: Data] in
             var dict: [NSPasteboard.PasteboardType: Data] = [:]
@@ -90,6 +93,7 @@ enum TextInserter {
 
         pb.clearContents()
         pb.setString(text, forType: .string)
+        let insertedChangeCount = pb.changeCount
 
         let source = CGEventSource(stateID: .combinedSessionState)
         let vKeyV: CGKeyCode = 0x09
@@ -105,11 +109,16 @@ enum TextInserter {
             up.post(tap: .cgSessionEventTap)
         }
         if backspaceAfter {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { backspace(count: 1) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard ContentAccessPolicy.isCurrent(origin) else { return }
+                backspace(count: 1)
+            }
         }
 
         // Restore the user's clipboard after the paste has been consumed.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            // Do not overwrite a copy the user made while the paste was pending.
+            guard pb.changeCount == insertedChangeCount else { return }
             pb.clearContents()
             for item in saved {
                 let pbItem = NSPasteboardItem()
@@ -120,11 +129,13 @@ enum TextInserter {
     }
 
     /// Delete `count` characters before the caret via synthesized Backspace presses.
+    @MainActor
     static func backspace(count: Int) {
-        guard count > 0 else { return }
+        guard let origin = ContentAccessPolicy.current(), count > 0 else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
         let deleteKey: CGKeyCode = 0x33   // Backspace
         for _ in 0..<count {
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             if let down = CGEvent(keyboardEventSource: source, virtualKey: deleteKey, keyDown: true) {
                 down.setIntegerValueField(.eventSourceUserData, value: injectedMarker)
                 down.post(tap: .cgSessionEventTap)
@@ -138,12 +149,15 @@ enum TextInserter {
 
     /// Type `text` in chunks of `chunk` UTF-16 units; with `spaceKeys`, spaces
     /// go as real Space key presses.
+    @MainActor
     static func type(_ text: String, chunk: Int, spaceKeys: Bool) {
+        guard let origin = ContentAccessPolicy.current() else { return }
         guard spaceKeys else { return typeChunks(text, chunk: chunk) }
         let source = CGEventSource(stateID: .combinedSessionState)
         var run = ""
         for ch in text {
             if ch == " " {
+                guard ContentAccessPolicy.isCurrent(origin) else { return }
                 typeChunks(run, chunk: chunk); run = ""
                 for down in [true, false] {
                     guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0x31, keyDown: down) else { continue }
@@ -158,15 +172,18 @@ enum TextInserter {
     }
 
     /// Type `text` into the focused field via synthesized key events (clipboard-free).
+    @MainActor
     static func insert(_ text: String) { typeChunks(text, chunk: 16) }
 
+    @MainActor
     private static func typeChunks(_ text: String, chunk: Int) {
-        guard !text.isEmpty else { return }
+        guard let origin = ContentAccessPolicy.current(), !text.isEmpty else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
 
         // A single keyDown/keyUp pair carrying the whole string works for most
         // apps; some apps prefer per-character events, so chunk defensively.
         for scalarChunk in text.chunkedByUTF16(maxUnits: max(1, chunk)) {
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             let utf16 = Array(scalarChunk.utf16)
 
             if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {

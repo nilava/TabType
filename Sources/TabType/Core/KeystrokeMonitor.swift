@@ -33,6 +33,8 @@ final class KeystrokeMonitor {
     /// Keys acted on through system hotkeys (`HotKeyCenter`) — the tap leaves
     /// them alone entirely.
     var isHotKey: ((_ keyCode: Int64, _ flags: CGEventFlags) -> Bool)?
+    /// Checked before resolving Unicode text, including in excluded applications.
+    var shouldObserveInput: (() -> Bool)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -77,7 +79,7 @@ final class KeystrokeMonitor {
         runLoopSource = nil
     }
 
-    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Re-enable if the system disabled our tap (e.g. after a timeout).
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -96,6 +98,7 @@ final class KeystrokeMonitor {
 
         // Shortcuts are hotkeys now; the tap only observes the rest.
         if isHotKey?(keyCode, flags) == true { return Unmanaged.passUnretained(event) }
+        guard shouldObserveInput?() == true else { return Unmanaged.passUnretained(event) }
         // Navigation and other control keys: observed (they clear a suggestion,
         // remember a sent message…), never consumed.
         if (handleControlKey?(keyCode, flags) ?? .notControl) != .notControl {

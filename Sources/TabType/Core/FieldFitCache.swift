@@ -1,7 +1,5 @@
 import AppKit
-import ImageIO
 import TabTypeKit
-import UniformTypeIdentifiers
 
 /// Measured appearance of the text in a field: which font, size and colours it
 /// renders with, and where its baseline sits relative to the caret rect. Fitted
@@ -35,7 +33,7 @@ final class FieldFitCache {
     /// Cached or freshly measured fit for the field at `caret`. nil when the text
     /// can't be measured (no screen permission, too little text, low confidence).
     /// `knownSize`: the size the app reported over AX — only the family is fitted.
-    func fit(caret: CGRect, fieldFrame: CGRect?, key: String, lineText: String, verbose: Bool,
+    func fit(caret: CGRect, fieldFrame: CGRect?, key: String, lineText: String, verbose _: Bool,
              knownSize: CGFloat? = nil) async -> Fit? {
         if let cached = fits[key], Date().timeIntervalSince(cached.created) < 600 { return cached }
         guard !inFlight.contains(key), CGPreflightScreenCaptureAccess() else { return nil }
@@ -70,7 +68,6 @@ final class FieldFitCache {
                                   knownSize: knownSize.map(Double.init))
         }.value
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        if verbose { Self.dump(image, key: key) }
 
         guard let result else {
             Log.shared.debug("placement: fit gave no result (\(ms)ms)")
@@ -107,14 +104,4 @@ final class FieldFitCache {
         NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 1)
     }
 
-    /// Verbose mode: keep the captured strips for diagnosing placement.
-    private static func dump(_ image: CGImage, key: String) {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/TabType/fit")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let name = "\(Int(Date().timeIntervalSince1970))-\(abs(key.hashValue) % 100_000).png"
-        guard let dest = CGImageDestinationCreateWithURL(dir.appendingPathComponent(name) as CFURL,
-                                                         UTType.png.identifier as CFString, 1, nil) else { return }
-        CGImageDestinationAddImage(dest, image, nil)
-        CGImageDestinationFinalize(dest)
-    }
 }

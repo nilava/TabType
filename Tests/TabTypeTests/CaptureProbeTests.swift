@@ -10,6 +10,9 @@ final class CaptureProbeTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         guard let spec = env["TABTYPE_CAPTURE_RECT"], let out = env["TABTYPE_CAPTURE_OUT"] else { throw XCTSkip("manual") }
         let v = spec.split(separator: ",").compactMap { Double($0) }
+        guard v.count == 4, v.allSatisfy(\.isFinite), v[2] > 0, v[3] > 0 else {
+            throw XCTSkip("capture rectangle must have four finite coordinates and positive size")
+        }
         let captured = await GhostAppearanceProbe.captureScaled(rect: CGRect(x: v[0], y: v[1], width: v[2], height: v[3]))
         let shot = try XCTUnwrap(captured)
         let dest = try XCTUnwrap(CGImageDestinationCreateWithURL(URL(fileURLWithPath: out) as CFURL, UTType.png.identifier as CFString, 1, nil))

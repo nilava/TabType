@@ -16,6 +16,9 @@ final class WritingStore: ObservableObject {
         var bundleId: String
         var text: String
         var updated: Date
+        /// The deletion generation in which this writing was created. A peer
+        /// cannot relabel an older offline draft merely by adopting a watermark.
+        var epoch: Date? = nil
     }
 
     enum Kind { case message, field }
@@ -26,6 +29,13 @@ final class WritingStore: ObservableObject {
     var onChange: (() -> Void)?
     /// Sync between Macs wants to hear about new writing.
     var onSyncNeeded: (() -> Void)?
+    var onErase: (() -> Void)?
+    private(set) var erasedBefore: Date?
+
+    private struct State: Codable {
+        var documents: [Document]
+        var erasedBefore: Date?
+    }
 
     private var documents: [Document] = []
     private let maxCharacters = 1_000_000
@@ -35,11 +45,11 @@ final class WritingStore: ObservableObject {
     private var keyURL: URL { directory.appendingPathComponent("history.key") }
     private var legacyHistoryURL: URL { directory.appendingPathComponent("typing-history.enc") }
 
-    private init() {
-        directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    init(directory: URL? = nil) {
+        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TabType", isDirectory: true)
         load()
-        importLegacyHistory()
+        if directory == nil { importLegacyHistory() }
     }
 
     var texts: [String] { documents.map(\.text) }
@@ -50,15 +60,16 @@ final class WritingStore: ObservableObject {
         switch kind {
         case .message:
             guard documents.last?.text != clean else { return }
-            documents.append(Document(key: "msg:\(UUID().uuidString)", bundleId: bundleId, text: clean, updated: Date()))
+            documents.append(Document(key: "msg:\(UUID().uuidString)", bundleId: bundleId, text: clean, updated: Date(), epoch: erasedBefore))
         case .field:
             let key = "field:\(bundleId)|\(fieldKey ?? "")"
             if let i = documents.firstIndex(where: { $0.key == key }) {
                 guard documents[i].text != clean else { return }
                 documents[i].text = clean
                 documents[i].updated = Date()
+                documents[i].epoch = erasedBefore
             } else {
-                documents.append(Document(key: key, bundleId: bundleId, text: clean, updated: Date()))
+                documents.append(Document(key: key, bundleId: bundleId, text: clean, updated: Date(), epoch: erasedBefore))
             }
         }
         trim()
@@ -87,9 +98,18 @@ final class WritingStore: ObservableObject {
     var allDocuments: [Document] { documents }
 
     /// Merge writing from another Mac: union by key, the newer version wins.
-    func merge(_ incoming: [Document]) {
+    func merge(_ incoming: [Document], erasedBefore remoteErase: Date? = nil) {
         var changed = false
-        for doc in incoming {
+        if let remoteErase, remoteErase > (erasedBefore ?? .distantPast) {
+            erasedBefore = remoteErase
+            documents.removeAll { $0.epoch != remoteErase }
+            onErase?()
+            changed = true
+        }
+        // Older clients/peers must first adopt the deletion before sharing writing.
+        // Otherwise their next sync could reintroduce a retained pre-erasure copy.
+        let acceptsWriting = erasedBefore == nil || (remoteErase ?? .distantPast) >= erasedBefore!
+        for doc in incoming where acceptsWriting && doc.epoch == erasedBefore {
             if let i = documents.firstIndex(where: { $0.key == doc.key }) {
                 if doc.updated > documents[i].updated, doc.text != documents[i].text {
                     documents[i] = doc
@@ -105,11 +125,19 @@ final class WritingStore: ObservableObject {
         persist()
     }
 
-    func eraseAll() {
+    func eraseAll() throws {
         documents.removeAll()
-        try? FileManager.default.removeItem(at: fileURL)
+        erasedBefore = Date()
         refreshCounts()
+        onErase?()
         onChange?()
+        // Keep an encrypted deletion record, including when sync is currently off.
+        try writeState()
+        onSyncNeeded?()
+        for name in ["typing-history.enc", "import-writing.jsonl"] {
+            let legacy = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: legacy.path) { try FileManager.default.removeItem(at: legacy) }
+        }
     }
 
     // MARK: Storage
@@ -128,11 +156,16 @@ final class WritingStore: ObservableObject {
         characterCount = documents.reduce(0) { $0 + $1.text.count }
     }
 
+    private func writeState() throws {
+        guard let key = encryptionKey() else { throw CocoaError(.fileWriteUnknown) }
+        let data = try JSONEncoder().encode(State(documents: documents, erasedBefore: erasedBefore))
+        let sealed = try AES.GCM.seal(data, using: key).combined!
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try sealed.write(to: fileURL, options: .atomic)
+    }
+
     private func persist() {
-        guard let key = encryptionKey(), let data = try? JSONEncoder().encode(documents),
-              let sealed = try? AES.GCM.seal(data, using: key).combined else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? sealed.write(to: fileURL, options: .atomic)
+        try? writeState()
         onChange?()
         onSyncNeeded?()
     }
@@ -140,14 +173,17 @@ final class WritingStore: ObservableObject {
     private func load() {
         guard let key = encryptionKey(), let sealed = try? Data(contentsOf: fileURL),
               let box = try? AES.GCM.SealedBox(combined: sealed),
-              let data = try? AES.GCM.open(box, using: key),
-              let docs = try? JSONDecoder().decode([Document].self, from: data) else { return }
-        documents = docs
+              let data = try? AES.GCM.open(box, using: key) else { return }
+        if let state = try? JSONDecoder().decode(State.self, from: data) {
+            documents = state.documents.filter { $0.epoch == state.erasedBefore }
+            erasedBefore = state.erasedBefore
+        } else if let legacy = try? JSONDecoder().decode([Document].self, from: data) { documents = legacy }
         refreshCounts()
     }
 
     /// One-time import of the old snippet history (entries only).
     private func importLegacyHistory() {
+        guard erasedBefore == nil else { return }
         let marker = "writingStoreImportedLegacy"
         guard !UserDefaults.standard.bool(forKey: marker) else { return }
         UserDefaults.standard.set(true, forKey: marker)
@@ -193,6 +229,7 @@ final class PersonalIndex {
 
     private func scheduleRebuild(delay: TimeInterval = 5) {
         rebuild?.cancel()
+        index = nil
         let texts = WritingStore.shared.texts
         rebuild = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }

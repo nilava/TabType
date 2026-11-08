@@ -12,6 +12,7 @@ final class Log: @unchecked Sendable {
 
     private let url: URL
     private let previousURL: URL
+    private let directory: URL
     private let queue = DispatchQueue(label: "app.tabtype.log")
     private let formatter: DateFormatter
     private var writesSinceCheck = 0
@@ -22,6 +23,7 @@ final class Log: @unchecked Sendable {
     private init() {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/TabType", isDirectory: true)
+        directory = dir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent("tabtype.log")
         previousURL = dir.appendingPathComponent("tabtype.1.log")
@@ -41,11 +43,22 @@ final class Log: @unchecked Sendable {
         write(message())
     }
 
-    /// Delete both log files (Settings → Advanced).
-    func clear() {
-        queue.async { [url, previousURL] in
-            try? FileManager.default.removeItem(at: url)
-            try? FileManager.default.removeItem(at: previousURL)
+    /// Include captures created by older versions; new versions never save them.
+    func clear() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async { [directory] in
+                do {
+                    try Self.clearFiles(in: directory)
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    static func clearFiles(in directory: URL) throws {
+        for name in ["tabtype.log", "tabtype.1.log", "fit"] {
+            do { try FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { continue }
         }
     }
 

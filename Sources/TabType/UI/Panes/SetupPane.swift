@@ -44,7 +44,7 @@ struct SetupPane: View {
 
                 statusRow(
                     ok: screenOK, title: "Screen Recording permission",
-                    detail: "Recommended for better context in non-chat apps. Screenshots are processed locally and never stored or sent anywhere.",
+                    detail: "Optional context for non-chat apps. Screenshot images are processed on this Mac and discarded.",
                     action: (screenOK ? nil : ("Grant", { _ = ScreenContextProvider.shared.requestPermission() })),
                     doneLabel: "Granted")
 
@@ -61,7 +61,7 @@ struct SetupPane: View {
 
             Section("Optional") {
                 Toggle("Use clipboard as context", isOn: $settings.useClipboardContext)
-                Text("When on, TabType reads your clipboard to better understand what you're working on. Processed locally; never stored or sent anywhere. (Free — no upgrade required.)")
+                Text("Uses recent clipboard text as local model context. Turn this off to keep the clipboard out of suggestions.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

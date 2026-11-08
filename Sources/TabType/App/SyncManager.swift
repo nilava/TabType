@@ -71,7 +71,7 @@ final class SyncManager: ObservableObject {
                 self.scheduleSync(after: 5)
             }
         }
-        WritingStore.shared.onSyncNeeded = { [weak self] in self?.scheduleSync(after: 30) }
+        WritingStore.shared.onSyncNeeded = { [weak self] in self?.scheduleSync(after: WritingStore.shared.documentCount == 0 ? 0 : 30) }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 10 * 60, repeats: true) { _ in
             MainActor.assumeIsolated { SyncManager.shared.syncNow() }
@@ -80,6 +80,8 @@ final class SyncManager: ObservableObject {
     }
 
     func stop() {
+        pendingSync?.cancel()
+        pendingSync = nil
         settingsWatch = nil
         timer?.invalidate()
         timer = nil
@@ -108,6 +110,7 @@ final class SyncManager: ObservableObject {
         var settingsChangedAt: Date
         var settings: SyncedSettings
         var writing: [WritingStore.Document]
+        var erasedBefore: Date? = nil
     }
 
     func syncNow() {
@@ -131,7 +134,7 @@ final class SyncManager: ObservableObject {
                     continue
                 }
                 others += 1
-                WritingStore.shared.merge(payload.writing)
+                WritingStore.shared.merge(payload.writing, erasedBefore: payload.erasedBefore)
                 if payload.settingsChangedAt > settingsChangedAt {
                     applyingRemote = true
                     settings.apply(payload.settings)
@@ -142,7 +145,7 @@ final class SyncManager: ObservableObject {
 
             let mine = Payload(machine: Host.current().localizedName ?? "Mac", written: Date(),
                                settingsChangedAt: settingsChangedAt, settings: settings.syncSnapshot,
-                               writing: WritingStore.shared.allDocuments)
+                               writing: WritingStore.shared.allDocuments, erasedBefore: WritingStore.shared.erasedBefore)
             let sealed = try AES.GCM.seal(try JSONEncoder().encode(mine), using: key).combined!
             try sealed.write(to: folder.appendingPathComponent("\(machineID).tabtypesync"), options: .atomic)
 

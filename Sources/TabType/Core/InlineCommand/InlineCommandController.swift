@@ -18,6 +18,7 @@ final class InlineCommandController {
     /// Bumped on every state change so async trigger-verification callbacks can
     /// detect they're stale and no-op.
     private var generation = 0
+    private var origin: ContentAccessPolicy.Snapshot?
     /// Ranked emoji candidates for the current query, and which one the user has
     /// selected via arrow keys (defaults to the top match). Reset whenever the query
     /// changes.
@@ -35,6 +36,7 @@ final class InlineCommandController {
     /// Feed one typed edit. Returns true if a command is (now) active, so the Engine
     /// suppresses LLM suggestions. `caretRect` is resolved lazily for the preview.
     func handleEdit(chars: String, isDeletion: Bool, caretRect: () -> CGRect?) -> Bool {
+        if isActive, !originIsCurrent { cancel() }
         if isDeletion {
             guard mode != .idle else { lastChar = nil; return false }
             if query.isEmpty {
@@ -55,10 +57,14 @@ final class InlineCommandController {
 
         if mode == .idle {
             if ch == ":" && settings.emojiEnabled {
+                guard let access = ContentAccessPolicy.current() else { return false }
+                origin = access
                 mode = .emoji; query = ""; triggerChar = ":"; generation += 1
                 refreshPreview(caretRect()); lastChar = ch; return true
             }
             if ch == "/" && settings.macrosEnabled && isWordBoundary(lastChar) {
+                guard let access = ContentAccessPolicy.current() else { return false }
+                origin = access
                 mode = .macro; query = ""; triggerChar = "/"; generation += 1
                 refreshPreview(caretRect()); lastChar = ch; return true
             }
@@ -113,9 +119,10 @@ final class InlineCommandController {
         let expectedGeneration = generation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { [weak self] in
             guard let self, self.isActive, self.generation == expectedGeneration else { return }
+            guard self.originIsCurrent else { self.cancel(); return }
             guard let element = AccessibilityBridge.focusedElement(),
                   let before = AccessibilityBridge.textBeforeCaret(of: element, maxChars: 60)
-            else { return }   // no AX view — keep the counter's verdict
+            else { self.cancel(); return }
             if !before.hasSuffix(String(self.triggerChar) + self.query) {
                 self.cancel()
             }
@@ -124,9 +131,14 @@ final class InlineCommandController {
 
     /// Try to accept the current command. Returns how many typed chars to delete
     /// (trigger + query) and the text to insert, or nil if there's nothing to accept.
-    func accept() -> (deleteCount: Int, insert: String)? {
-        guard mode != .idle else { return nil }
+    func accept() -> (deleteCount: Int, insert: String, typed: String)? {
+        guard mode != .idle, originIsCurrent,
+              let element = AccessibilityBridge.focusedElement(),
+              AccessibilityBridge.hasCollapsedCaret(of: element),
+              let before = AccessibilityBridge.textBeforeCaret(of: element, maxChars: 60),
+              before.hasSuffix(String(triggerChar) + query) else { cancel(); return nil }
         let typedCount = 1 + query.count
+        let typed = String(triggerChar) + query
         var result: String?
         switch mode {
         case .emoji:
@@ -142,7 +154,7 @@ final class InlineCommandController {
         }
         reset()
         guard let result else { return nil }
-        return (typedCount, result)
+        return (typedCount, result, typed)
     }
 
     func cancel() { reset() }
@@ -152,6 +164,7 @@ final class InlineCommandController {
     /// `.emoji` mode with candidates to choose among, so the caller falls back to
     /// normal navigation-key behavior instead.
     func moveSelection(by delta: Int, caretRect: () -> CGRect?) -> Bool {
+        guard originIsCurrent else { cancel(); return false }
         guard mode == .emoji, !candidates.isEmpty else { return false }
         selectedIndex = ((selectedIndex + delta) % candidates.count + candidates.count) % candidates.count
         preview.showEmojiCandidates(candidates, selectedIndex: selectedIndex, caretRect: caretRect())
@@ -166,6 +179,7 @@ final class InlineCommandController {
     }
 
     private func refreshPreview(_ caret: CGRect?) {
+        guard originIsCurrent else { cancel(); return }
         switch mode {
         case .emoji:
             candidates = Array(EmojiMatcher.preferringGender(
@@ -191,6 +205,7 @@ final class InlineCommandController {
     }
 
     private func reset() {
+        origin = nil
         mode = .idle
         query = ""
         candidates = []
@@ -198,5 +213,9 @@ final class InlineCommandController {
         unmatchedStreak = 0
         generation += 1
         preview.hide()
+    }
+
+    private var originIsCurrent: Bool {
+        origin.map(ContentAccessPolicy.isCurrent) ?? false
     }
 }

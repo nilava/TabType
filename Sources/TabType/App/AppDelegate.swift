@@ -82,11 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             ScreenContextProvider.shared.requestPermission()
         }
 
-        // Confirm the capture+OCR pipeline works on this machine (logs the result).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            ScreenContextProvider.shared.selfTest()
-        }
-
         // Gate on Accessibility permission.
         if AccessibilityBridge.isTrusted() {
             _ = engine.start()

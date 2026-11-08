@@ -10,7 +10,13 @@ final class LlamaEngine {
     let models: LlamaModelManager
 
     /// The most recent shown-or-gated result, for the word picker's alternatives.
-    private(set) var lastResult: TabTypeKit.CompletionResult?
+    private var storedResult: TabTypeKit.CompletionResult?
+    private var resultOrigin: ContentAccessPolicy.Snapshot?
+    private var privacyEpoch: UInt64 = 0
+    var lastResult: TabTypeKit.CompletionResult? {
+        guard let resultOrigin, ContentAccessPolicy.isCurrent(resultOrigin) else { return nil }
+        return storedResult
+    }
 
     /// Recent results by exact prompt + options: re-typing, deleting back, or a
     /// repeat request for unchanged input is answered without running the model.
@@ -28,6 +34,8 @@ final class LlamaEngine {
     func cancelInFlight() { _ = models.inference.beginRequest() }
 
     func complete(_ request: CompletionRequest) async -> String? {
+        guard let origin = ContentAccessPolicy.current() else { return nil }
+        let epoch = privacyEpoch
         guard let template = models.template, var options = models.decoderOptions else { return nil }
         let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
 
@@ -61,9 +69,11 @@ final class LlamaEngine {
             }
             result = fresh
             cached = false
-            remember(fresh, key: cacheKey)
         }
-        lastResult = result
+        guard epoch == privacyEpoch, ContentAccessPolicy.isCurrent(origin) else { return nil }
+        if !cached { remember(result, key: cacheKey) }
+        storedResult = result
+        resultOrigin = origin
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         // Measured on the author's own writing (867 cases from their real typing):
         // finishing a half-typed word is right far more often than guessing the
@@ -98,6 +108,9 @@ final class LlamaEngine {
 
     /// Forget cached results (model or settings changed).
     func clearRecent() {
+        privacyEpoch &+= 1
+        storedResult = nil
+        resultOrigin = nil
         recent.removeAll()
         recentOrder.removeAll()
     }
