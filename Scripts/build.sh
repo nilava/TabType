@@ -62,6 +62,15 @@ app)
         cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
     fi
 
+    # Finder metadata copied with resource/framework bundles is not signable.
+    # Remove only packaging detritus; preserve quarantine and other protections.
+    xattr -dr com.apple.FinderInfo "$APP" 2>/dev/null || true
+    xattr -dr com.apple.ResourceFork "$APP" 2>/dev/null || true
+    # On macOS, deleting FinderInfo may leave package flags backing that value.
+    # Writing zero clears those flags instead of letting them reappear at verify.
+    find "$APP" -type d \( -name '*.app' -o -name '*.bundle' -o -name '*.framework' \) \
+        -exec xattr -wx com.apple.FinderInfo 0000000000000000000000000000000000000000000000000000000000000000 {} +
+
     # Code signature. Prefer the stable self-signed "TabType Dev" identity (set up via
     # Scripts/setup-signing.sh) so macOS keeps Accessibility/Screen Recording grants
     # across rebuilds; fall back to ad-hoc if it isn't installed.
@@ -80,6 +89,7 @@ app)
             "$APP" 2>/dev/null || codesign --force --deep --sign - "$APP"
     fi
 
+    codesign --verify --deep --strict "$APP"
     echo "Done: $APP"
     echo "Run:  open \"$APP\"   (or: \"$APP/Contents/MacOS/TabType\" to see logs)"
     ;;
