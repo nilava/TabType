@@ -84,15 +84,20 @@ struct MacroEngine {
         guard let value = Double(numStr) else { return nil }
         let from = String(lhs[i...]).trimmingCharacters(in: .whitespaces)
 
-        if let result = Self.convert(value, from: from, to: target) {
-            let n = (result * 100).rounded() / 100
-            return "\(formatNumber(n)) \(target)"
+        if let result = Self.convert(value, from: from, to: target),
+           let number = formatNumber(result, places: 2) {
+            return "\(number) \(target)"
         }
         return nil
     }
 
-    private func formatNumber(_ n: Double) -> String {
-        n == n.rounded() ? String(Int(n)) : String(n)
+    private func formatNumber(_ n: Double, places: Int) -> String? {
+        guard n.isFinite else { return nil }
+        let scale = pow(10.0, Double(places))
+        let rounded = abs(n) <= Double.greatestFiniteMagnitude / scale
+            ? (n * scale).rounded() / scale : n
+        if let integer = Int(exactly: rounded) { return String(integer) }
+        return String(rounded)
     }
 
     /// Base-unit conversion tables (length, mass, temperature).
@@ -127,7 +132,7 @@ struct MacroEngine {
         }
         var parser = ArithmeticParser(q)
         guard let d = parser.evaluate() else { return nil }
-        return d == d.rounded() ? String(Int(d)) : String((d * 1e6).rounded() / 1e6)
+        return formatNumber(d, places: 6)
     }
 }
 
