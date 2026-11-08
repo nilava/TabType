@@ -33,7 +33,7 @@ public struct ModelStore: Sendable {
            attributes[.type] as? FileAttributeType != .typeRegular {
             throw ModelDownloadError.unsafeFileName
         }
-        guard file.resolvingSymlinksInPath().deletingLastPathComponent() == root else {
+        guard file.resolvingSymlinksInPath().deletingLastPathComponent().pathComponents == root.pathComponents else {
             throw ModelDownloadError.unsafeFileName
         }
         return file

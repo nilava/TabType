@@ -106,4 +106,14 @@ final class ModelPathSecurityTests: XCTestCase {
         // Existing downloader tests use README.md; safe basenames need no GGUF suffix.
         XCTAssertEqual(try store.url(for: entry("README.md")).lastPathComponent, "README.md")
     }
+
+    func testFirstInstallCanUseAMissingDirectoryWithoutADirectoryURLHint() throws {
+        let (root, _) = try fixture()
+        let missing = URL(fileURLWithPath: root.path + "/new-models")
+        let store = ModelStore(directory: missing)
+        XCTAssertNoThrow(try store.url(for: entry("model.gguf")))
+        XCTAssertNoThrow(try store.partialURL(for: entry("model.gguf")))
+        XCTAssertFalse(store.isInstalled(entry("model.gguf")))
+        XCTAssertThrowsError(try store.url(for: entry("../outside.txt")))
+    }
 }
