@@ -80,6 +80,9 @@ public enum ModelDownloadError: Error, CustomStringConvertible, Equatable {
     case sizeMismatch(expected: Int64, actual: Int64)
     case checksumMismatch
     case unsafeFileName
+    case invalidSize
+    case responseTooLarge(expected: Int64)
+    case invalidRange
 
     public var description: String {
         switch self {
@@ -87,6 +90,9 @@ public enum ModelDownloadError: Error, CustomStringConvertible, Equatable {
         case .sizeMismatch(let e, let a): return "downloaded \(a) bytes, expected \(e)"
         case .checksumMismatch: return "file checksum does not match the catalog"
         case .unsafeFileName: return "model filename must identify a regular file inside the model folder"
+        case .invalidSize: return "model size must be positive"
+        case .responseTooLarge(let expected): return "model response exceeds the expected \(expected) bytes"
+        case .invalidRange: return "server returned an inconsistent model byte range"
         }
     }
 }
@@ -105,6 +111,7 @@ public final class ModelDownloader: @unchecked Sendable {
 
     public func download(_ entry: ModelCatalog.Entry, into store: ModelStore,
                          progress: Progress? = nil) async throws -> URL {
+        guard entry.sizeBytes > 0 else { throw ModelDownloadError.invalidSize }
         let destination = try store.url(for: entry)
         if store.isInstalled(entry) { return destination }
         let partial = try store.partialURL(for: entry)
@@ -117,6 +124,8 @@ public final class ModelDownloader: @unchecked Sendable {
                 try await transfer(entry.url, to: partial, expected: entry.sizeBytes, progress: progress)
                 break
             } catch let error as ModelDownloadError {
+                if case .responseTooLarge = error { try? FileManager.default.removeItem(at: partial) }
+                if case .invalidRange = error { try? FileManager.default.removeItem(at: partial) }
                 throw error
             } catch {
                 attempt += 1
@@ -160,11 +169,14 @@ public final class ModelDownloader: @unchecked Sendable {
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
         var offset = try handle.seekToEnd()
-        guard Int64(offset) < expected else { return }
+        guard offset <= UInt64(expected) else { throw ModelDownloadError.responseTooLarge(expected: expected) }
+        guard offset < UInt64(expected) else { return }
 
         var request = URLRequest(url: url)
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
         let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if offset > 0, status == 200 {
             // Server ignored the range: start over.
@@ -173,12 +185,28 @@ public final class ModelDownloader: @unchecked Sendable {
         } else if status != 200, status != 206 {
             throw ModelDownloadError.httpStatus(status)
         }
+        let http = response as? HTTPURLResponse
+        if status == 206 {
+            guard Self.validRange(http?.value(forHTTPHeaderField: "Content-Range"),
+                                  offset: Int64(offset), expected: expected) else {
+                throw ModelDownloadError.invalidRange
+            }
+        }
+        let encoding = http?.value(forHTTPHeaderField: "Content-Encoding")?.lowercased()
+        if encoding == nil || encoding == "identity" {
+            guard response.expectedContentLength <= expected - Int64(offset) else {
+                throw ModelDownloadError.responseTooLarge(expected: expected)
+            }
+        }
 
         var buffer = Data()
         buffer.reserveCapacity(1 << 20)
         var received = Int64(offset)
         var lastReport = Date.distantPast
         for try await byte in bytes {
+            guard Int64(buffer.count) < expected - received else {
+                throw ModelDownloadError.responseTooLarge(expected: expected)
+            }
             buffer.append(byte)
             if buffer.count >= 1 << 20 {
                 try handle.write(contentsOf: buffer)
@@ -194,6 +222,16 @@ public final class ModelDownloader: @unchecked Sendable {
         try handle.write(contentsOf: buffer)
         received += Int64(buffer.count)
         progress?(received, expected)
+    }
+
+    private static func validRange(_ header: String?, offset: Int64, expected: Int64) -> Bool {
+        guard let header else { return false }
+        let fields = header.lowercased().split(whereSeparator: { $0.isWhitespace })
+        guard fields.count == 2, fields[0] == "bytes" else { return false }
+        let bounds = fields[1].split(separator: "/", omittingEmptySubsequences: false)
+        guard bounds.count == 2, Int64(bounds[1]) == expected else { return false }
+        let span = bounds[0].split(separator: "-", omittingEmptySubsequences: false)
+        return span.count == 2 && Int64(span[0]) == offset && Int64(span[1]) == expected - 1
     }
 
     static func sha256(of url: URL) throws -> String {
