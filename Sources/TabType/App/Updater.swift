@@ -104,8 +104,7 @@ final class Updater: ObservableObject {
         Task {
             do {
                 let (tmp, _) = try await URLSession.shared.download(from: release.dmg)
-                let dmg = FileManager.default.temporaryDirectory.appendingPathComponent("TabType-\(release.version).dmg")
-                try? FileManager.default.removeItem(at: dmg)
+                let dmg = FileManager.default.temporaryDirectory.appendingPathComponent("TabType-\(UUID().uuidString).dmg")
                 try FileManager.default.moveItem(at: tmp, to: dmg)
 
                 state = .installing("Verifying…")
@@ -120,11 +119,8 @@ final class Updater: ObservableObject {
                 defer { try? Self.run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
                 let newApp = mount.appendingPathComponent("TabType.app")
                 let bundlePath = Bundle.main.bundlePath
-                let same = try await Self.background {
-                    try Self.signingAuthority(newApp.path) == Self.signingAuthority(bundlePath)
-                }
-                guard same else {
-                    throw UpdateError("The update isn't signed like this copy of TabType — not installed")
+                try await Self.background {
+                    try UpdateSignatureVerifier.verifyUpdate(at: newApp, replacing: URL(fileURLWithPath: bundlePath))
                 }
 
                 state = .installing("Installing…")
@@ -133,6 +129,9 @@ final class Updater: ObservableObject {
                 do {
                     try? FileManager.default.removeItem(at: staged)
                     try await Self.background { try Self.run("/usr/bin/ditto", [newApp.path, staged.path]) }
+                    try await Self.background {
+                        try UpdateSignatureVerifier.verifyUpdate(at: staged, replacing: current)
+                    }
                     _ = try FileManager.default.replaceItemAt(current, withItemAt: staged)
                 } catch {
                     // Can't write next to the app (e.g. admin-owned folder): hand the
@@ -142,7 +141,7 @@ final class Updater: ObservableObject {
                 }
                 Log.shared.info("updates: installed \(release.version), relaunching")
                 let path = current.path
-                try Self.run("/bin/sh", ["-c", "(sleep 1; /usr/bin/open \"\(path)\") >/dev/null 2>&1 &"])
+                try Self.run("/bin/sh", ["-c", "(sleep 1; /usr/bin/open \"$1\") >/dev/null 2>&1 &", "TabType", path])
                 NSApp.terminate(nil)
             } catch {
                 state = .failed("\(error)")
@@ -179,13 +178,4 @@ final class Updater: ObservableObject {
         return text
     }
 
-    /// The leaf signing authority ("TabType Dev"), after a strict verification.
-    nonisolated private static func signingAuthority(_ path: String) throws -> String {
-        try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", path])
-        let info = try run("/usr/bin/codesign", ["-dvv", path])
-        guard let line = info.split(separator: "\n").first(where: { $0.hasPrefix("Authority=") }) else {
-            throw UpdateError("Unsigned app")
-        }
-        return String(line.dropFirst("Authority=".count))
-    }
 }
