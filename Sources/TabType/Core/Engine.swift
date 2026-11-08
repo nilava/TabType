@@ -210,6 +210,7 @@ final class Engine {
     /// `allowWrap` of the suggestion on screen, for re-placing it.
     private var shownAllowWrap = false
     private var accessoryToggleObserver: AnyCancellable?
+    private var contentSettingsObserver: AnyCancellable?
     /// AX focused-element observer for the frontmost app (recreated on app switch).
     private var focusObserver: AXFocusObserver?
 
@@ -223,6 +224,10 @@ final class Engine {
         self.settings = settings
         self.router = EngineRouter()
         self.inlineCommand = InlineCommandController(settings: settings)
+        ContentAccessPolicy.engineAllowsContent = { [weak self] in
+            guard let self, !self.isPaused else { return false }
+            return self.frontmostAppPause() == nil
+        }
     }
 
     /// Start monitoring. Returns false if the event tap couldn't be created
@@ -271,6 +276,12 @@ final class Engine {
     /// The keystroke tap only sees keydowns, so without these the ghost text
     /// lingers forever when the user Cmd-Tabs away or clicks elsewhere.
     private func installDismissObservers() {
+        contentSettingsObserver = settings.objectWillChange.sink { [weak self] in
+            // Published sends before the new value is installed. Revoke now;
+            // subsequent work reads the new setting on the next main-loop turn.
+            ContentAccessPolicy.invalidate()
+            DispatchQueue.main.async { self?.discardSensitiveState() }
+        }
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
@@ -287,6 +298,7 @@ final class Engine {
             }
             let newPid = app?.processIdentifier
             MainActor.assumeIsolated {
+                ContentAccessPolicy.invalidate()
                 // The accessory button is anchored to the previous app's window —
                 // hide it now; the next edit in the new app re-shows it.
                 self.accessory.hide()
@@ -332,6 +344,7 @@ final class Engine {
             matching: [.leftMouseDown, .rightMouseDown]
         ) { _ in
             MainActor.assumeIsolated {
+                guard let origin = ContentAccessPolicy.current() else { self.discardSensitiveState(); return }
                 let hadSuggestion = self.currentSuggestion != nil
                 self.dropPendingEdits()   // a click can move the caret
                 // Even without a ghost, a click can move text focus (e.g. web
@@ -341,6 +354,7 @@ final class Engine {
                 let beforeCaret = beforeElement.flatMap { AccessibilityBridge.caretOffset(of: $0) }
                 let beforeLen = beforeElement.flatMap { AccessibilityBridge.stringValue(of: $0)?.count }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
                     // A click is exactly when text focus appears/disappears with no
                     // keystroke — re-evaluate the accessory button either way.
                     self.updateAccessoryButton()
@@ -394,6 +408,7 @@ final class Engine {
                 let now = AccessibilityBridge.focusedElement()
                 if let now, let before = self.observedFocus, CFEqual(now, before) { return }
                 self.observedFocus = now
+                ContentAccessPolicy.invalidate()
                 self.lockedContext = nil
                 self.observeFocusedField()
                 if self.currentSuggestion != nil { self.clearSuggestion() }
@@ -427,16 +442,17 @@ final class Engine {
     /// Input-tail prefill instead of the whole prompt. The 1-token result is
     /// discarded; runs only when idle and skipped in Low Power Mode.
     private func schedulePrewarm(policy: AppPolicy) {
-        guard settings.isEnabled, !PowerMonitor.shared.isLowPower else { return }
+        guard let origin = ContentAccessPolicy.current(), !PowerMonitor.shared.isLowPower else { return }
         prewarmTask?.cancel()
         prewarmTask = Task { [weak self] in
             // Let the focus-change screen capture land first (throttle is 1.5s, a
             // capture kicked just above typically completes well inside 0.8s).
             try? await Task.sleep(nanoseconds: 800_000_000)
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, ContentAccessPolicy.isCurrent(origin) else { return }
             // Only when idle — never compete with a real prediction.
             guard self.currentSuggestion == nil, self.buffer.isEmpty else { return }
             let bid = AccessibilityBridge.frontmostBundleId()
+            let policy = AppPolicyStore.policy(forBundleId: bid, host: origin.host)
             let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
             let screenEnabled = (self.settings.useScreenContext || policy.forceScreenContext)
                 && policy.includesScreenContext
@@ -464,6 +480,7 @@ final class Engine {
     /// a dictionary completion (mid-word), plus one higher-temperature model
     /// regeneration that streams in when ready.
     private func showWordAlternatives() {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         // A selected word: offer words that fit in its place instead.
         let llama = router.current
         if let element = AccessibilityBridge.focusedElement(),
@@ -496,9 +513,10 @@ final class Engine {
         let partial = String(buffer.reversed().prefix { $0.isLetter }.reversed())
         if partial.count >= 3 {
             Task { [weak self] in
-                guard let self else { return }
+                guard let self, ContentAccessPolicy.isCurrent(origin) else { return }
                 if let word = await SpellChecker.shared.completion(
                     for: partial, language: self.settings.autocorrectLanguage) {
+                    guard ContentAccessPolicy.isCurrent(origin) else { return }
                     self.alternatives.addCandidate(String(word.dropFirst(partial.count)),
                                                    forGeneration: gen, caretRect: caretRect)
                 }
@@ -513,10 +531,11 @@ final class Engine {
     /// Synonym mode: words the model finds fitting in place of the selection.
     private func showSynonyms(for word: String, before: String, after: String, llama: LlamaEngine,
                               caretRect: CGRect?) {
+        guard let origin = ContentAccessPolicy.current() else { return }
         let base = lastReq
         Task { [weak self] in
             let words = await llama.synonyms(for: word, before: before, after: after, base: base)
-            guard let self else { return }
+            guard let self, ContentAccessPolicy.isCurrent(origin) else { return }
             guard !words.isEmpty else {
                 Log.shared.debug("synonyms: none for \"\(word)\"")
                 return
@@ -530,10 +549,12 @@ final class Engine {
     /// Replace the selected text with a picked synonym (typing over a selection
     /// replaces it natively).
     private func replaceSelection(with word: String) {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         alternatives.hide()
         alternativesReplaceSelection = false
         let insertPolicy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
         DispatchQueue.main.async {
+            guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
             self.markEdit()
             self.dropPendingEdits()   // text changed other than by typing
             TextInserter.insert(word, policy: insertPolicy)
@@ -542,6 +563,7 @@ final class Engine {
 
     /// Insert a chosen alternative word (accept-word bookkeeping included).
     private func insertAlternative(_ word: String) {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         alternatives.hide()
         overlay.hide()
         session.clear()
@@ -553,6 +575,7 @@ final class Engine {
         let baselineLen = AccessibilityBridge.focusedElement()
             .flatMap { AccessibilityBridge.textLength(of: $0) }
         DispatchQueue.main.async {
+            guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
             self.markEdit()
             self.dropPendingEdits()   // text changed other than by typing
             TextInserter.insert(toInsert, policy: insertPolicy)
@@ -592,7 +615,7 @@ final class Engine {
     /// Pause suggestions for `minutes`, or indefinitely if nil, until `resume()`.
     func pause(minutes: Int?) {
         pausedUntil = minutes.map { Date().addingTimeInterval(TimeInterval($0 * 60)) } ?? .distantFuture
-        clearSuggestion()
+        discardSensitiveState()
     }
 
     func resume() {
@@ -610,7 +633,7 @@ final class Engine {
     func pauseFrontmostApp(minutes: Int) {
         guard let bid = AccessibilityBridge.frontmostBundleId() else { return }
         pausedApps[bid] = Date().addingTimeInterval(TimeInterval(minutes * 60))
-        clearSuggestion()
+        discardSensitiveState()
         Log.shared.info("suggestions paused \(minutes) min in \(bid)")
     }
 
@@ -640,6 +663,9 @@ final class Engine {
         }
         accessoryToggleObserver?.cancel()
         accessoryToggleObserver = nil
+        contentSettingsObserver?.cancel()
+        contentSettingsObserver = nil
+        discardSensitiveState()
         accessory.hide()
         HotKeyCenter.shared.setActive([])
         isRunning = false
@@ -648,6 +674,12 @@ final class Engine {
     // MARK: - Callback wiring
 
     private func wireCallbacks() {
+        monitor.shouldObserveInput = {
+            MainActor.assumeIsolated {
+                guard ContentAccessPolicy.current() != nil else { self.discardSensitiveState(); return false }
+                return true
+            }
+        }
         accessory.onClick = {
             NotificationCenter.default.post(name: .tabTypeOpenSettings, object: nil)
         }
@@ -655,9 +687,16 @@ final class Engine {
         // BEFORE the app sees the key, then let it through and do the rest.
         monitor.onEdit = { chars, isDeletion, _, timestamp in
             MainActor.assumeIsolated {
+                guard let origin = ContentAccessPolicy.current() else {
+                    self.discardSensitiveState()
+                    return
+                }
                 self.beforeEditDelivered()
                 self.recordKeystroke(chars: chars, isDeletion: isDeletion, at: timestamp)
-                DispatchQueue.main.async { self.handleEdit(chars: chars, isDeletion: isDeletion) }
+                DispatchQueue.main.async {
+                    guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
+                    self.handleEdit(chars: chars, isDeletion: isDeletion)
+                }
             }
         }
         monitor.handleControlKey = { keyCode, flags in
@@ -747,6 +786,24 @@ final class Engine {
 
     /// Map a keydown against configured shortcut bindings and navigation keys.
     private func handleControlKey(keyCode: Int64, flags: CGEventFlags) -> ControlDecision {
+        // Global controls must remain usable even when content access is denied.
+        if settings.toggleKey.matches(keyCode: keyCode, flags: flags) {
+            settings.isEnabled.toggle()
+            discardSensitiveState()
+            return .swallow
+        }
+        if settings.appPauseKey.matches(keyCode: keyCode, flags: flags) {
+            if let bid = AccessibilityBridge.frontmostBundleId() {
+                if frontmostAppPause() != nil { pausedApps[bid] = nil }
+                else { pausedApps[bid] = Date().addingTimeInterval(5 * 60) }
+            }
+            discardSensitiveState()
+            return .swallow
+        }
+        guard ContentAccessPolicy.current() != nil else {
+            discardSensitiveState()
+            return .passthrough
+        }
         // Word-alternatives panel intercepts digits/Escape while open.
         if alternatives.isActive {
             let digitKeys: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4]   // 1-4 row keys
@@ -767,31 +824,12 @@ final class Engine {
             return .swallow
         }
 
-        // Global enable/disable toggle.
-        if settings.toggleKey.matches(keyCode: keyCode, flags: flags) {
-            settings.isEnabled.toggle()
-            return .swallow
-        }
         // Force-activate: one-shot bypass of the prediction gates (short input,
         // mid-line policy, chat-panels-only) — Cotypist's Ctrl+`.
         if settings.forceActivateKey.matches(keyCode: keyCode, flags: flags) {
             forceNextPrediction = true
             runPrediction()
             forceNextPrediction = false
-            return .swallow
-        }
-        // Per-app temporary pause toggle (a few minutes in the frontmost app).
-        if settings.appPauseKey.matches(keyCode: keyCode, flags: flags) {
-            if let bid = AccessibilityBridge.frontmostBundleId() {
-                if pausedApps[bid] != nil {
-                    pausedApps[bid] = nil
-                    Log.shared.info("per-app pause lifted for \(bid)")
-                } else {
-                    pausedApps[bid] = Date().addingTimeInterval(5 * 60)
-                    clearSuggestion()
-                    Log.shared.info("suggestions paused 5 min in \(bid)")
-                }
-            }
             return .swallow
         }
         // Per-app override: some apps need Tab to keep its native meaning (e.g. IDEs).
@@ -877,6 +915,7 @@ final class Engine {
     }
 
     private func handleEdit(chars: String, isDeletion: Bool) {
+        guard ContentAccessPolicy.current() != nil else { discardSensitiveState(); return }
         defer { refreshHotKeys() }   // an inline command may have opened or closed
         // Freeze screen captures while typing (see ScreenContextProvider), and
         // capture once the typing pauses — otherwise a long message keeps the
@@ -1131,7 +1170,7 @@ final class Engine {
     private func scheduleSeedRead() {
         seedRead?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.fieldRead == nil,
+            guard let self, ContentAccessPolicy.current() != nil, self.fieldRead == nil,
                   Date().timeIntervalSince(self.lastKeystrokeAt) > 0.15,   // typing: the prediction reads it
                   let element = AccessibilityBridge.focusedElement(),
                   !AccessibilityBridge.isSecureField(element),
@@ -1195,13 +1234,14 @@ final class Engine {
     /// "Suggest synonyms for a selected word after a pause": the field reported a
     /// selection change; offer synonyms if one word stays selected.
     private func selectionChanged() {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         guard settings.synonymsAfterDelay, let element = AccessibilityBridge.focusedElement(),
               let selection = AccessibilityBridge.selection(of: element) else { return }
         let word = selection.selected.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (2...40).contains(word.count), !word.contains(" "), !word.contains("\n") else { return }
         labsTimer?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.alternatives.isActive,
+            guard let self, ContentAccessPolicy.isCurrent(origin), !self.alternatives.isActive,
                   let el = AccessibilityBridge.focusedElement(),
                   AccessibilityBridge.selection(of: el)?.selected.trimmingCharacters(in: .whitespacesAndNewlines) == word
             else { return }
@@ -1213,7 +1253,8 @@ final class Engine {
 
     /// Watch the focused field's own notifications (re-created when focus moves).
     private func observeFocusedField() {
-        guard let element = AccessibilityBridge.focusedElement() else { fieldObserver = nil; return }
+        guard let access = ContentAccessPolicy.current() else { fieldObserver = nil; return }
+        let element = access.element
         if let current = fieldObserver, CFEqual(current.element, element) { return }
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
@@ -1267,6 +1308,7 @@ final class Engine {
     /// If the token just before the boundary is a known emoticon (":-)"), replace it
     /// with the emoji. Returns true if a replacement was made.
     private func replaceEmoticon(boundary: Character) -> Bool {
+        guard let origin = ContentAccessPolicy.current() else { return false }
         guard buffer.count >= 2 else { return false }
         let withoutBoundary = String(buffer.dropLast())
         guard let token = withoutBoundary.split(whereSeparator: { $0 == " " || $0 == "\n" }).last,
@@ -1274,6 +1316,7 @@ final class Engine {
         let deleteCount = token.count + 1   // token + boundary
         buffer = String(buffer.dropLast(deleteCount)) + emoji + String(boundary)
         DispatchQueue.main.async {
+            guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
             self.dropPendingEdits()   // text changed other than by typing
             TextInserter.backspace(count: deleteCount)
             TextInserter.insert(emoji + String(boundary), strategy: .keystroke)
@@ -1285,6 +1328,7 @@ final class Engine {
     /// finds a confident fix. Applied asynchronously and only if the buffer tail is
     /// still intact (the user hasn't typed past it).
     private func maybeAutocorrect() {
+        guard let origin = ContentAccessPolicy.current() else { return }
         // buffer currently ends with the boundary char just typed.
         guard buffer.count >= 4 else { return }
         let withoutBoundary = String(buffer.dropLast())
@@ -1298,7 +1342,7 @@ final class Engine {
         if let f = AccessibilityBridge.focusedElement(), AccessibilityBridge.isSecureField(f) { return }
 
         SpellChecker.shared.correct(wordStr, language: settings.autocorrectLanguage) { [weak self] corrected in
-            guard let self, let corrected else { return }
+            guard let self, let corrected, ContentAccessPolicy.isCurrent(origin) else { return }
             guard self.buffer.hasSuffix(expectedSuffix) else { return }  // tail unchanged
             let deleteCount = expectedSuffix.count
             self.buffer = String(self.buffer.dropLast(deleteCount)) + corrected + boundary
@@ -1366,6 +1410,7 @@ final class Engine {
     }
 
     private func runPrediction() {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         let front = NSWorkspace.shared.frontmostApplication
         let frontApp = front?.localizedName
         let bundleId = front?.bundleIdentifier
@@ -1592,11 +1637,15 @@ final class Engine {
                 Statistics.shared.record(.gatedTypo)
                 return
             }
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             Statistics.shared.record(.requested)
             self.inFlightCounter += 1
             let id = self.inFlightCounter
             self.inFlight = (ctx.input, id)
+            defer { if self.inFlight?.id == id { self.inFlight = nil } }
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             let raw = await engine.complete(req)
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             if self.inFlight?.id == id { self.inFlight = nil }
             await self.handlePredictionResult(
                 raw: raw, req: req, ctxInput: ctx.input, policy: policy, startedAt: startedAt)
@@ -1740,6 +1789,7 @@ final class Engine {
 
     /// Compute the continuation of `input + suggestion` while `suggestion` is shown.
     private func startLookahead(after suggestion: String, input: String, request: CompletionRequest) {
+        guard let origin = ContentAccessPolicy.current() else { return }
         var ahead = request
         ahead.beforeCursor = input + suggestion
         ahead.afterCursor = ""
@@ -1748,8 +1798,9 @@ final class Engine {
         lookahead = entry
         let engine = router.current
         Task { [weak self] in
+            guard ContentAccessPolicy.isCurrent(origin) else { return }
             let text = await engine.complete(ahead)
-            guard let self, self.lookahead?.input == entry.input, self.lookahead?.after == suggestion else { return }
+            guard ContentAccessPolicy.isCurrent(origin), let self, self.lookahead?.input == entry.input, self.lookahead?.after == suggestion else { return }
             self.lookahead?.text = text ?? ""
             if let text { Log.shared.debug("lookahead: after \"\(suggestion)\" → \"\(text)\"") }
         }
@@ -1760,6 +1811,7 @@ final class Engine {
     private func present(suggestion: String, inlineCaret: CGRect?, windowRect: CGRect?,
                          policy: AppPolicy? = nil, isNewSuggestion: Bool = true,
                          allowWrap: Bool = false) {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return }
         // Re-present paths don't carry a policy — resolve the frontmost app's so
         // per-app presentation rules (bubble vs inline) always apply.
         let policy = policy ?? AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
@@ -1847,7 +1899,7 @@ final class Engine {
             // Paint at a specific caret rect, font and baseline (nil: derived from
             // the caret box) — the occupancy retry must render where it verified.
             let paint: (CGRect, NSFont, NSColor?, CGFloat?) -> Void = { [weak self] rect, useFont, useColor, baseline in
-                guard let self else { return }
+                guard let self, ContentAccessPolicy.isCurrent(origin) else { return }
                 let shown = self.overlay.showInline(
                     text: suggestion, at: rect, font: useFont,
                     opacity: self.settings.ghostOpacity,
@@ -1894,7 +1946,7 @@ final class Engine {
                 && (caretAnchor.map { Self.caretMoved(caretRect, from: $0) } ?? false)
             if !trustedCaret { overlay.hide() }   // our own ghost must not trip the check
             Task { [weak self] in
-                guard let self else { return }
+                guard let self, ContentAccessPolicy.isCurrent(origin) else { return }
                 // Stop the strip well short of the input box's right edge — trailing
                 // controls (send buttons, icons) live there and read as "occupied".
                 func stripRight(of rect: CGRect) -> CGRect? {
@@ -1910,17 +1962,17 @@ final class Engine {
                 }
                 var target = anchored
                 var occupied = trustedCaret ? false : await checkOccupied(target)
-                guard self.currentSuggestion == suggestion else { return }   // stale
+                guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }   // stale
                 if occupied == true {
                     try? await Task.sleep(nanoseconds: 250_000_000)
-                    guard self.currentSuggestion == suggestion else { return }
+                    guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }
                     // Re-read the caret — the bounds may have settled by now — and
                     // both CHECK and PAINT at that fresh position.
                     target = (AccessibilityBridge.focusedElement()
                         .flatMap { AccessibilityBridge.caretRect(of: $0) } ?? anchored)
                         .offsetBy(dx: 0, dy: policy.verticalOffset)
                     occupied = await checkOccupied(target)
-                    guard self.currentSuggestion == suggestion else { return }
+                    guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }
                     if occupied == true {
                         // Never paint a ghost over real pixels; the HUD pill is
                         // anchored to the window, so it can't overlap the text.
@@ -1949,7 +2001,7 @@ final class Engine {
                             caret: target, fieldFrame: elementFrame, key: fitKey + "|family", lineText: lineText,
                             verbose: self.settings.verboseLog, knownSize: style.font.pointSize),
                            fit.familyMatched, let family = fit.font.familyName {
-                            guard self.currentSuggestion == suggestion else { return }
+                            guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }
                             self.fieldFamily[fitKey] = family
                             let matched = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5,
                                                                     size: font.pointSize) ?? font
@@ -1980,7 +2032,7 @@ final class Engine {
                     let lineText = element.flatMap { AccessibilityBridge.textBeforeCaret(of: $0, maxChars: 120) } ?? ""
                     if let fit = await FieldFitCache.shared.fit(caret: target, fieldFrame: elementFrame, key: fitKey,
                                                                 lineText: lineText, verbose: self.settings.verboseLog) {
-                        guard self.currentSuggestion == suggestion else { return }
+                        guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }
                         paint(target, fittedFont(fit), fit.textColor, target.minY + fit.baselineOffset)
                         return
                     }
@@ -1990,7 +2042,7 @@ final class Engine {
                 var useFont = font
                 var probedBaseline: CGFloat?
                 if let band = await GhostAppearanceProbe.inkBand(in: leftStrip) {
-                    guard self.currentSuggestion == suggestion else { return }
+                    guard self.currentSuggestion == suggestion, ContentAccessPolicy.isCurrent(origin) else { return }
                     let bandHeight = band.bottom - band.top
                     // Taller than the caret's line box: the strip caught more than
                     // one line (or an icon) — distrust it.
@@ -2018,11 +2070,13 @@ final class Engine {
     /// Accept the current inline command or LLM suggestion. Returns true if something
     /// was accepted (so the key is swallowed). `whole` = accept the entire suggestion.
     private func acceptCurrent(whole: Bool) -> Bool {
+        guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return false }
         // Inline command (emoji/macro) takes priority over LLM suggestions.
         if inlineCommand.isActive {
             if let (deleteCount, insert) = inlineCommand.accept() {
                 buffer = String(buffer.dropLast(deleteCount)) + insert
                 DispatchQueue.main.async {
+                    guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
                     self.dropPendingEdits()   // text changed other than by typing
                     TextInserter.backspace(count: deleteCount)
                     TextInserter.insert(insert, strategy: .keystroke)
@@ -2083,6 +2137,7 @@ final class Engine {
 
         // Insert on the next tick so we return from the tap callback first.
         DispatchQueue.main.async {
+            guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
             // Synthesized keystrokes are invisible to the tap (injected marker), so
             // stamp the keystroke clock manually — the settle gate must treat the
             // insertion like typing, or the remainder ghost paints at the
@@ -2127,6 +2182,7 @@ final class Engine {
     /// (copied minutes/hours ago) are noise, not signal. Also skips non-prose
     /// content (logs, timestamps, hex dumps) via a letter-ratio gate.
     private func freshClipboardText() -> String {
+        guard ContentAccessPolicy.current() != nil else { return "" }
         let pb = NSPasteboard.general
         if pb.changeCount != clipboardChangeCount {
             clipboardChangeCount = pb.changeCount
@@ -2151,6 +2207,32 @@ final class Engine {
             accessory.hide(); return
         }
         accessory.show(near: windowRect)
+    }
+
+    /// Forget context without triggering another AX seed read or storing a draft.
+    private func discardSensitiveState() {
+        ContentAccessPolicy.invalidate()
+        seedRead?.cancel()
+        labsTimer?.cancel()
+        fieldObserver = nil
+        pendingPlacement = nil
+        inFlight = nil
+        deferredWhileInFlight = false
+        lastPredictedPrompt = ""
+        pauseCapture?.cancel()
+        prewarmTask?.cancel()
+        fieldRead = nil
+        pendingKeys.removeAll()
+        buffer = ""
+        lastAXInput = nil
+        lastReq = nil
+        lookahead = nil
+        lockedContext = nil
+        recentInputs.removeAll()
+        acceptedInCurrentText = false
+        inlineCommand.cancel()
+        ScreenContextProvider.shared.discardHistory()
+        clearSuggestion()
     }
 
     /// `keepGeneration`: typing ahead — let a running generation finish so its

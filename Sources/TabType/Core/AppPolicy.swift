@@ -392,11 +392,11 @@ enum AppPolicyStore {
             policy.transcriptViaAX = true
             policy.screenContextCap = chatContextCap
         }
-        let match = userOverrides.first { key, _ in
+        let match = userOverrides.filter { key, _ in
             guard key.hasPrefix("domain:") else { return false }
             let domain = String(key.dropFirst("domain:".count))
             return host == domain || host.hasSuffix("." + domain)
-        }
+        }.max { $0.key.count < $1.key.count }
         if let (_, o) = match {
             if let e = o.enabled { policy.isEnabled = e }
             if let m = o.midLineEnabled { policy.allowsMidLine = m }

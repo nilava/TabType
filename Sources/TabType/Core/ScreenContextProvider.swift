@@ -58,6 +58,8 @@ final class ScreenContextProvider: ObservableObject {
 
     private init() {}
 
+    func discardHistory() { history.removeAll() }
+
     // MARK: Permission
 
     func hasPermission() -> Bool { CGPreflightScreenCaptureAccess() }
@@ -72,6 +74,7 @@ final class ScreenContextProvider: ObservableObject {
     /// own text is passed along so the OCR can strip it — the prompt already carries
     /// that text verbatim via accessibility, so re-OCR'ing it only adds noise.
     func refreshIfStale() {
+        guard let origin = ContentAccessPolicy.current() else { return }
         guard hasPermission() else {
             if !warnedNoPermission {
                 warnedNoPermission = true
@@ -115,7 +118,7 @@ final class ScreenContextProvider: ObservableObject {
         let cropMode = AppSettings.ScreenCropMode.caretCropped
         // Chat apps (host-aware, so web chats count too) keep the accessibility
         // transcript as a fallback for when the screen read produces nothing.
-        let frontHost = AccessibilityBridge.frontmostURLHost()
+        let frontHost = origin.host
         let frontTitle = focused.flatMap { ContextReader.windowOf($0) }
             .flatMap { AccessibilityBridge.stringAttribute(kAXTitleAttribute as String, of: $0) }
         let policy = AppPolicyStore.policy(forBundleId: frontBid, host: frontHost)
@@ -139,15 +142,16 @@ final class ScreenContextProvider: ObservableObject {
             // fallback when that produces nothing.
             let capture = await ScreenContextProvider.captureFocusedWindow(
                 pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect,
-                windowFrame: windowFrame, fieldFrame: ocrField)
+                windowFrame: windowFrame, fieldFrame: ocrField, origin: origin)
             if let (app, bid, text) = capture, text.count >= 12 {
                 await MainActor.run {
                     self.capturing = false
+                    guard ContentAccessPolicy.isCurrent(origin) else { return }
                     self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
                 }
                 return
             }
-            if let windowBox,
+            if await ContentAccessPolicy.isCurrent(origin), let windowBox,
                let transcript = TranscriptExtractor.extract(
                     windowElement: windowBox.element,
                     excludingSubtreeOf: focusedBox?.element,
@@ -155,6 +159,7 @@ final class ScreenContextProvider: ObservableObject {
                transcript.count >= 80 {
                 await MainActor.run {
                     self.capturing = false
+                    guard ContentAccessPolicy.isCurrent(origin) else { return }
                     self.append(app: frontName, bundleId: frontBid, text: transcript,
                                 windowTitle: frontTitle,
                                 host: frontHost, source: "ax transcript")
@@ -212,14 +217,15 @@ final class ScreenContextProvider: ObservableObject {
 
     func contextText(for bundleId: String?, cap: Int, host: String? = nil,
                      windowTitle: String? = AccessibilityBridge.focusedWindowTitle()) -> String {
-        guard !history.isEmpty, let bundleId else { return "" }
+        guard let access = ContentAccessPolicy.current(), access.bundleId == bundleId,
+              !history.isEmpty, let bundleId else { return "" }
         let cutoff = Date().addingTimeInterval(-maxAge)
         // Browsers share one bundle id across tabs — when a host is known, only
         // same-host entries count as CURRENT context (a previous site's text is
         // offered separately as previous-app background, never as current).
         let matching = history.filter {
             $0.bundleId == bundleId && $0.time >= cutoff
-                && (host == nil || $0.host == nil || $0.host == host)
+                && $0.host == access.host
                 && (windowTitle == nil || $0.windowTitle == nil || $0.windowTitle == Self.stableTitle(windowTitle))
         }
         Log.shared.debug("screen context requested for bid=\(bundleId)\(host.map { " host=\($0)" } ?? ""), found \(matching.count) fresh entries out of \(history.count) total")
@@ -231,7 +237,7 @@ final class ScreenContextProvider: ObservableObject {
     /// One-shot diagnostic: capture the frontmost window, OCR it, and log the result
     /// at info level so we can confirm the capture+OCR pipeline works on this machine.
     func selfTest() {
-        guard hasPermission() else {
+        guard ContentAccessPolicy.current() != nil, hasPermission() else {
             Log.shared.info("screen self-test: no Screen Recording permission")
             return
         }
@@ -260,11 +266,17 @@ final class ScreenContextProvider: ObservableObject {
     /// focused field's own text (`fieldText`) so we don't echo what's being typed.
     nonisolated static func captureFocusedWindow(
         pid: pid_t?, fieldText: String, cropMode: AppSettings.ScreenCropMode, caretRect: CGRect?, windowFrame: CGRect?,
-        fieldFrame: CGRect? = nil
+        fieldFrame: CGRect? = nil, origin: ContentAccessPolicy.Snapshot? = nil
     ) async -> (String, String, String)? {
+        let authorization: ContentAccessPolicy.Snapshot?
+        if let origin { authorization = origin }
+        else { authorization = await ContentAccessPolicy.current() }
+        guard let authorization, pid == authorization.pid,
+              await ContentAccessPolicy.isCurrent(authorization) else { return nil }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 true, onScreenWindowsOnly: true)
+            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
 
             let candidates = content.windows.filter { w in
                 guard w.isOnScreen, w.frame.width > 120, w.frame.height > 80 else { return false }
@@ -273,30 +285,10 @@ final class ScreenContextProvider: ObservableObject {
                 return true
             }
             
-            // First, try to exactly match the window frame provided by the Accessibility API
-            var window: SCWindow?
-            if let pid = pid, let frame = windowFrame {
-                // SCWindow frames and AXWindow frames might have slight differences depending on borders/shadows.
-                // We check that the centers are within 100 points, which is robust against shadow insets.
-                window = candidates.first { w in
-                    w.owningApplication?.processID == pid &&
-                    abs(w.frame.midX - frame.midX) < 100 &&
-                    abs(w.frame.midY - frame.midY) < 100
-                }
-            }
-            
-            // Fallback: The frontmost app's largest window; else the largest overall.
-            if window == nil {
-                let byArea: (SCWindow, SCWindow) -> Bool = {
-                    $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
-                }
-                if let pid, let w = candidates.filter({ $0.owningApplication?.processID == pid }).max(by: byArea) {
-                    window = w
-                } else {
-                    window = candidates.max(by: byArea)
-                }
-            }
-            guard let window else { return nil }
+            guard let frame = authorization.windowFrame,
+                  let index = ContentAccessPolicy.windowIndex(pid: authorization.pid, frame: frame,
+                    windows: candidates.map { ($0.owningApplication?.processID, $0.frame) }) else { return nil }
+            let window = candidates[index]
 
             let config = SCStreamConfiguration()
             let scale = 2
@@ -304,8 +296,10 @@ final class ScreenContextProvider: ObservableObject {
             config.height = min(Int(window.frame.height) * scale, 3000)
             config.showsCursor = false
             let filter = SCContentFilter(desktopIndependentWindow: window)
+            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
             guard var image = try? await SCScreenshotManager.captureImage(
                 contentFilter: filter, configuration: config) else { return nil }
+            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
             
             // Caret cropping: keep only the vertical band around the caret's line.
             // Crop the height ONLY — text flows horizontally, so a horizontal pixel

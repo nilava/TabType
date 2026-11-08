@@ -158,11 +158,16 @@ final class GhostAppearanceProbe: ObservableObject {
     /// Screenshot of `rect` (top-left global points) at the display's real pixel
     /// scale, with TabType's own windows excluded so the ghost never sees itself.
     nonisolated static func captureScaled(rect: CGRect) async -> (image: CGImage, scale: Double)? {
+        guard let origin = await ContentAccessPolicy.current(),
+              let window = origin.windowFrame, window.contains(rect) else { return nil }
         guard let content = await ShareableContentCache.shared.content() else { return nil }
+        guard await ContentAccessPolicy.isCurrent(origin) else { return nil }
         guard let display = content.displays.first(where: { displayRectTopLeft($0).intersects(rect) })
                 ?? content.displays.first else { return nil }
-        let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-        let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+        guard let index = ContentAccessPolicy.windowIndex(pid: origin.pid, frame: window,
+            windows: content.windows.map { ($0.owningApplication?.processID, $0.frame) }) else { return nil }
+        let focusedWindow = content.windows[index]
+        let filter = SCContentFilter(desktopIndependentWindow: focusedWindow)
         let scale = pixelScale(of: display)
         let config = SCStreamConfiguration()
         // sourceRect is in points, top-left origin relative to the display.
@@ -170,8 +175,8 @@ final class GhostAppearanceProbe: ObservableObject {
         // and then aspect-fits it into width×height, squeezing the content and
         // leaving transparent columns. So capture the whole-point rect at exactly
         // `scale`, then crop back to the requested rect.
-        let local = CGRect(x: rect.minX - display.frame.minX,
-                           y: rect.minY - displayRectTopLeft(display).minY,
+        let local = CGRect(x: rect.minX - focusedWindow.frame.minX,
+                           y: rect.minY - focusedWindow.frame.minY,
                            width: rect.width, height: rect.height)
         let integral = local.integral
         config.sourceRect = integral
@@ -180,6 +185,7 @@ final class GhostAppearanceProbe: ObservableObject {
         config.showsCursor = false
         guard let full = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         else { return nil }
+        guard await ContentAccessPolicy.isCurrent(origin) else { return nil }
         let crop = CGRect(x: ((local.minX - integral.minX) * scale).rounded(),
                           y: ((local.minY - integral.minY) * scale).rounded(),
                           width: (local.width * scale).rounded(),
