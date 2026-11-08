@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct SettingsView: View {
     enum Section: String, CaseIterable, Identifiable {
@@ -16,6 +17,38 @@ struct SettingsView: View {
         case statistics = "Statistics"
         case about = "About"
 
+        var keywords: String {
+            switch self {
+            case .setup: return "permissions accessibility recording start"
+            case .general: return "battery launch login completion length opacity appearance enable predictions"
+            case .engine: return "download gguf RAM memory local model"
+            case .context: return "privacy screenshots clipboard screen recording accessibility"
+            case .personalization: return "privacy history learning writing erase delete sync iCloud voice name instructions"
+            case .textTools: return "autocorrect spelling language macros alternatives synonyms delay"
+            case .emoji: return "skin tone gender shortcode"
+            case .shortcuts: return "keyboard hotkey accept tab escape"
+            case .apps: return "privacy websites domains exclusion overrides saved applications"
+            case .advanced: return "privacy diagnostics logs delete verbose"
+            case .statistics: return "usage accepted shown words saved latency"
+            case .about: return "version update license acknowledgments"
+            }
+        }
+        var summary: String {
+            switch self {
+            case .setup: return "Check permissions, choose a model, and start writing."
+            case .general: return "Choose when suggestions appear and how they behave."
+            case .engine: return "Manage the model that runs on your Mac."
+            case .context: return "Control screenshots, Accessibility conversation reads, and clipboard context."
+            case .personalization: return "Shape your voice and manage learned writing and sync."
+            case .textTools: return "Fine-tune corrections, alternatives, and inline macros."
+            case .emoji: return "Choose your preferred emoji and shortcuts."
+            case .shortcuts: return "Keep common actions a keystroke away."
+            case .apps: return "Set privacy and writing preferences for each app and website."
+            case .advanced: return "Manage diagnostics and optional performance controls."
+            case .statistics: return "See how suggestions help your writing."
+            case .about: return "Version, updates, and the open-source tools behind TabType."
+            }
+        }
         var id: String { rawValue }
         var icon: String {
             switch self {
@@ -36,30 +69,71 @@ struct SettingsView: View {
     }
 
     @State private var selection: Section? = .setup
+    @State private var search = ""
+    @AppStorage("settings.lastPane") private var lastPane = Section.setup.rawValue
     @ObservedObject private var navigator = SettingsNavigator.shared
 
+    private let groups: [(String, [Section])] = [
+        ("Get started", [.setup, .general]),
+        ("Writing", [.engine, .personalization, .textTools, .emoji, .shortcuts]),
+        ("Privacy & context", [.context, .apps]),
+        ("TabType", [.advanced, .statistics, .about]),
+    ]
+
+    private func matches(_ section: Section) -> Bool {
+        search.isEmpty || (section.rawValue + " " + section.summary + " " + section.keywords).localizedCaseInsensitiveContains(search)
+    }
+
     var body: some View {
-        NavigationSplitView {
-            List(Section.allCases, selection: $selection) { section in
-                HStack(spacing: 8) {
-                    SidebarIconBadge(systemImage: section.icon, color: SectionAccent.color(for: section))
-                    Text(section.rawValue)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                TextField("Find a setting", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Find a setting")
+                    .padding(12)
+                    .accessibilityIdentifier("settings.search")
+                List(selection: $selection) {
+                    ForEach(groups, id: \.0) { group in
+                        let visible = group.1.filter(matches)
+                        if !visible.isEmpty {
+                            SwiftUI.Section(group.0) {
+                                ForEach(visible) { section in
+                                    Label(section.rawValue, systemImage: section.icon)
+                                        .padding(.vertical, 3)
+                                        .tag(section)
+                                }
+                            }
+                        }
+                    }
+                    if !Section.allCases.contains(where: matches) {
+                        Text("No matching settings").foregroundStyle(.secondary)
+                    }
                 }
-                .tag(section)
+                .listStyle(.sidebar)
+                    .frame(minHeight: 0, maxHeight: .infinity)
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 230)
-        } detail: {
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: 224)
+            .frame(minHeight: 0, maxHeight: .infinity)
+            Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                Text((selection ?? .setup).summary)
+                    .accessibilityIdentifier("settings.summary")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24).padding(.vertical, 14)
+                Divider()
+                detail.frame(minWidth: 530, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle((selection ?? .general).rawValue)
-        .frame(minWidth: 680, minHeight: 460)
+        .frame(minWidth: 780, minHeight: 540)
         .onAppear {
             if let pending = navigator.pendingSection {
                 selection = pending
                 navigator.pendingSection = nil
-            }
-            navigator.desiredContentWidth = Self.contentWidth(for: selection ?? .general)
+            } else { selection = Section(rawValue: lastPane) ?? .setup }
+            navigator.title = (selection ?? .setup).rawValue
         }
         .onChange(of: navigator.pendingSection) { _, pending in
             guard let pending else { return }
@@ -67,14 +141,9 @@ struct SettingsView: View {
             navigator.pendingSection = nil
         }
         .onChange(of: selection) { _, newValue in
-            navigator.desiredContentWidth = Self.contentWidth(for: newValue ?? .general)
+            lastPane = (newValue ?? .setup).rawValue
+            navigator.title = lastPane
         }
-    }
-
-    /// The Apps pane hosts a nested HSplitView (app list + detail) that needs more
-    /// room; every other pane is a single column and reads better narrower.
-    static func contentWidth(for section: Section) -> CGFloat {
-        section == .apps ? 980 : 760
     }
 
     @ViewBuilder private var detail: some View {
@@ -118,18 +187,33 @@ private struct GhostPreview: View {
 struct GeneralSettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var cotypistRunning = false
+
+    private func refreshAutocompleteConflict() {
+        cotypistRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "app.cotypist.Cotypist" }
+    }
 
     var body: some View {
         Form {
             Section {
                 Toggle("Enable suggestions", isOn: $settings.isEnabled)
+                if cotypistRunning && settings.isEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Cotypist is also running", systemImage: "exclamationmark.triangle")
+                            .fontWeight(.medium)
+                        Text("Two autocomplete apps can draw overlapping suggestions. Quit one, or pause TabType here.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Pause TabType") { settings.isEnabled = false }
+                    }
+                    .padding(.vertical, 4)
+                }
                 Toggle("Launch TabType at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in LaunchAtLogin.set(on) }
                 Toggle("Show menu bar icon", isOn: $settings.showMenuBarIcon)
                 Toggle("Show floating accessory button", isOn: $settings.showAccessoryButton)
                 Toggle("Disable macOS predictive text", isOn: $settings.disableMacOSPredictiveText)
                 if settings.disableMacOSPredictiveText {
-                    Text("Prevents conflicts with macOS's built-in inline suggestions. Log out and back in to fully apply.")
+                    Text("Requests that macOS inline predictions stay off. Some apps need to be reopened. Quit other autocomplete apps, such as Cotypist, to avoid overlapping suggestions.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -161,10 +245,15 @@ struct GeneralSettingsView: View {
                 HStack {
                     Text("Ghost text opacity")
                     Slider(value: $settings.ghostOpacity, in: 0.2...1.0)
+                        .accessibilityLabel("Ghost text opacity")
+                        .accessibilityValue("\(Int(settings.ghostOpacity * 100)) percent")
                 }
             }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshAutocompleteConflict)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in refreshAutocompleteConflict() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in refreshAutocompleteConflict() }
     }
 }
 
@@ -174,7 +263,7 @@ struct ModelSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Label("Suggestions come from a model that runs entirely on this Mac — nothing is sent anywhere. It shows a suggestion only when it's confident, and completes half-typed words.",
+                Label("Suggestions are generated on this Mac. Optional encrypted iCloud sync shares settings and learned writing; it does not run the model in the cloud.",
                       systemImage: "cpu")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -215,7 +304,7 @@ struct AppsSettingsView: View {
                 .padding(8)
                 Divider()
                 List(selection: $selected) {
-                    Section("Apps") {
+                    Section("Running apps & saved settings") {
                         ForEach(filteredApps) { app in
                             HStack(spacing: 8) {
                                 if let icon = app.icon {
@@ -258,6 +347,9 @@ struct AppsSettingsView: View {
             .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear(perform: reload)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in reload() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in reload() }
+        .onChange(of: Set(settings.appOverrides.keys)) { _, _ in reload() }
     }
 
     private func overrideBinding(for id: String) -> Binding<AppOverride> {
@@ -278,6 +370,13 @@ struct AppsSettingsView: View {
                 if !acc.contains(where: { $0.id == app.id }) { acc.append(app) }
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        for id in settings.appOverrides.keys.sorted() where !id.hasPrefix("domain:") && !apps.contains(where: { $0.id == id }) {
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+            let displayName = url.map { FileManager.default.displayName(atPath: $0.path) } ?? id
+            let name = displayName.hasSuffix(".app") ? String(displayName.dropLast(4)) : displayName
+            apps.append(RunningApp(id: id, name: name, icon: url.map { NSWorkspace.shared.icon(forFile: $0.path) }))
+        }
+        apps.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }
 
@@ -595,7 +694,7 @@ struct AdvancedSettingsView: View {
         Form {
             Section("Diagnostics") {
                 Toggle("Verbose logging", isOn: $settings.verboseLog)
-                Text("Verbose logs include snippets of what you type. Keep it off unless you're reporting a bug.")
+                Text("Verbose logs can include typed text and context. Keep this off unless you need diagnostics, and review logs before sharing them.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Open Log in Console") {
@@ -605,12 +704,12 @@ struct AdvancedSettingsView: View {
                 }
             }
             Section {
-                Label("TabType runs 100% locally. Your text never leaves this Mac.",
+                Label("Suggestions run locally. Optional iCloud sync shares encrypted settings and learned writing.",
                       systemImage: "lock.shield")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section {
-                Button("Reset to Defaults", role: .destructive) {
+                Button("Turn Off Verbose Logging") {
                     settings.verboseLog = false
                 }
             }

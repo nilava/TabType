@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
+        setupApplicationMenu()
         startSecureInputWatch()
         // Updates from GitHub Releases: at launch and then daily (Settings ▸ About).
         Updater.shared.checkIfDue()
@@ -94,6 +95,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             showOnboarding()
             waitForTrustThenStart()
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
+    }
+
+    /// A menu-bar app still needs normal app/edit commands while Settings is open.
+    private func setupApplicationMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let app = NSMenu(title: "TabType")
+        app.addItem(item("About TabType", icon: "info.circle", action: #selector(openAbout)))
+        app.addItem(.separator())
+        app.addItem(item("Settings…", icon: "gearshape", action: #selector(openSettings), key: ","))
+        app.addItem(.separator())
+        app.addItem(item("Quit TabType", icon: "power", action: #selector(quit), key: "q"))
+        appItem.submenu = app
+        main.addItem(appItem)
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        for (title, action, key) in [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"),
+            ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+            edit.addItem(NSMenuItem(title: title, action: Selector(action), keyEquivalent: key))
+        }
+        editItem.submenu = edit
+        main.addItem(editItem)
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: "Window")
+        window.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        window.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.mainMenu = main
     }
 
     /// The model must be freed before exit: ggml aborts if Metal resources are
@@ -287,22 +322,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func openSettings() {
         if settingsWindow == nil {
             let view = SettingsView().environmentObject(settings).environmentObject(llamaModels)
-            let hosting = NSHostingController(rootView: view)
-            let window = NSWindow(contentViewController: hosting)
-            window.title = "TabType Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: SettingsNavigator.shared.desiredContentWidth, height: 620))
-            window.minSize = NSSize(width: 760, height: 460)
-            window.isReleasedWhenClosed = false
+            let window = SettingsWindow.make(rootView: view)
             window.delegate = self
-            window.center()
             settingsWindow = window
-            // SwiftUI can't drive an AppKit-hosted window's size, so the settings
-            // content publishes the width each section wants and we animate to it.
-            SettingsNavigator.shared.$desiredContentWidth
-                .removeDuplicates()
-                .sink { [weak self] width in self?.resizeSettings(toContentWidth: width) }
+            SettingsNavigator.shared.$title.removeDuplicates()
+                .sink { [weak self] title in self?.settingsWindow?.title = title }
                 .store(in: &cancellables)
+
         }
         // Give TabType a Dock icon + Cmd-Tab entry while Settings is open — as a
         // menu-bar-only (.accessory) app, clicking another app would otherwise send
@@ -310,33 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
-        // Honor the current section's width now that the window is visible (the
-        // sink's initial value arrived while it was still hidden).
-        resizeSettings(toContentWidth: SettingsNavigator.shared.desiredContentWidth)
-    }
 
-    /// Animate the settings window to a section's desired content width, keeping it
-    /// on screen. Height is preserved (respects any manual vertical resize).
-    private func resizeSettings(toContentWidth width: CGFloat) {
-        guard let window = settingsWindow, window.isVisible else {
-            Log.shared.debug("resizeSettings(\(width)) skipped — window not visible")
-            return
-        }
-        let currentContent = window.contentRect(forFrameRect: window.frame).size
-        Log.shared.debug("resizeSettings: \(currentContent.width) -> \(width)")
-        guard abs(currentContent.width - width) > 1 else { return }
-        var frame = window.frame
-        let target = window.frameRect(forContentRect:
-            NSRect(x: 0, y: 0, width: width, height: currentContent.height)).size
-        // Grow/shrink around the current center, then nudge back on screen.
-        frame.origin.x -= (target.width - frame.width) / 2
-        frame.size.width = target.width
-        if let vis = window.screen?.visibleFrame {
-            frame.origin.x = min(max(frame.origin.x, vis.minX), vis.maxX - frame.width)
-        }
-        // `setFrame(_:display:animate:)` is the reliable AppKit API — `animator()`
-        // outside an explicit animation context can silently no-op.
-        window.setFrame(frame, display: true, animate: true)
     }
 
     @objc private func showOnboarding() {
@@ -366,12 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// Best-effort: write the global default that controls macOS inline predictive
     /// text so it doesn't conflict with TabType. Fully applies after log out/in.
     private func applyMacOSPredictiveText() {
-        let key = "NSAutomaticInlinePredictionEnabled" as CFString
-        let value = settings.disableMacOSPredictiveText ? kCFBooleanFalse : nil
-        CFPreferencesSetValue(key, value, kCFPreferencesAnyApplication,
-                              kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
-        CFPreferencesSynchronize(kCFPreferencesAnyApplication,
-                                 kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
+        MacOSPredictionPreference().apply(disabled: settings.disableMacOSPredictiveText)
     }
 
     @objc private func quit() {

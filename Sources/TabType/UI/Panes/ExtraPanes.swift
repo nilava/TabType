@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// What TabType is allowed to read for extra context, grouped the way Cotypist's own
 /// Context pane is (Screenshot Settings / Clipboard Settings) rather than folded into
@@ -20,7 +21,7 @@ struct ContextPane: View {
             }
             Section("Clipboard Settings") {
                 Toggle("Use clipboard for context", isOn: $settings.useClipboardContext)
-                Text("Reads your clipboard to understand what you're working with. Processed locally; never stored or sent anywhere.")
+                Text("Uses recent clipboard text as local model context. Turn this off to keep the clipboard out of suggestions.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -41,6 +42,8 @@ struct TextToolsPane: View {
                 HStack {
                     Text("Delay")
                     Slider(value: $settings.labsDelay, in: 0.5...4, step: 0.5)
+                        .accessibilityLabel("Alternatives and synonyms delay")
+                        .accessibilityValue(String(format: "%.1f seconds", settings.labsDelay))
                     Text(String(format: "%.1f s", settings.labsDelay)).monospacedDigit()
                         .foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                 }
@@ -205,7 +208,6 @@ private struct KeyRecorder: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             guard recording else { super.keyDown(with: event); return }
-            let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
             let b = KeyBinding(keyCode: Int(event.keyCode),
                                flags: cgFlags(from: event.modifierFlags))
             recording = false
@@ -261,7 +263,7 @@ struct PersonalizationPane: View {
             SyncSection()
             Section("Learn from your writing") {
                 Toggle("Learn from what I write", isOn: $settings.collectTypingHistory)
-                Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")
+                Text("TabType can retain your writing to reuse familiar words and phrases. It attempts to remove recognizable secrets, but cannot detect every sensitive detail. Writing is encrypted on this Mac; optional sync sends an encrypted copy through iCloud Drive. Control learning for each app in Apps. This history is shared across apps, without separate memory for each contact.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Personalization strength", selection: $settings.personalizationStrength) {
                     Text("Gentle").tag("gentle")
@@ -440,9 +442,9 @@ struct AboutPane: View {
             }
             UpdatesSection()
             Section("Privacy") {
-                Label("Runs 100% on your Mac. No cloud, no account, no telemetry.",
+                Label("Local inference, with optional encrypted iCloud sync. No TabType account required.",
                       systemImage: "lock.shield")
-                Label("Your text and screen content never leave the device.",
+                Label("Suggestions run on this Mac. Optional sync shares encrypted settings and learned writing through iCloud Drive.",
                       systemImage: "hand.raised")
                 Label("Password fields are never autocompleted.",
                       systemImage: "key.slash")
@@ -464,11 +466,9 @@ struct AboutPane: View {
     }
 
     private static let acknowledgments: [(name: String, detail: String)] = [
-        ("Apple Foundation Models & Vision", "On-device AI completions and OCR — Apple Inc."),
-        ("MLX Swift", "Local model inference on Apple silicon — Apple / ml-explore"),
-        ("mlx-swift-lm", "LLM model implementations — ml-explore"),
-        ("swift-transformers", "Hugging Face model download — Hugging Face"),
-        ("Qwen2.5", "Local base models — Alibaba (Apache-2.0)"),
+        ("llama.cpp", "Local inference runtime — ggml-org (MIT)"),
+        ("Apple Vision", "On-device text recognition — Apple Inc."),
+        ("Qwen3", "Downloadable local base models — Qwen / Alibaba (Apache-2.0)"),
         ("gemoji", "Emoji shortcode dataset — GitHub (MIT)"),
         ("FrequencyWords", "Autocorrect frequency lists — Hermit Dave (MIT)"),
         ("SymSpell algorithm", "Symmetric-delete spelling correction — Wolf Garbe (MIT)"),
