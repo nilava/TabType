@@ -579,6 +579,7 @@ final class Engine {
     /// Writer identity and instructions for the v2 prompt assembler, which frames
     /// them itself instead of using v1's pre-rendered `persona`.
     private func applyWriterContext(_ req: inout CompletionRequest, appName: String?, policy: AppPolicy) {
+        req.predictionStyle = policy.predictionStyle ?? settings.predictionStyle
         req.appName = appName ?? ""
         req.authorName = settings.authorName.trimmingCharacters(in: .whitespaces)
         let style = settings.writingStyle.trimmingCharacters(in: .whitespaces)
@@ -1571,6 +1572,7 @@ final class Engine {
         applyWriterContext(&req, appName: frontApp, policy: policy)
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
+        req.appBundleId = bundleId
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
         lastReq = req   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")

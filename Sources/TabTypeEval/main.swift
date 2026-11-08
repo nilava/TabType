@@ -7,6 +7,9 @@
 //   tabtype-eval report <run.json> [--baseline run.json]
 //                    [--template legacy|base|chatml|chatml-nothink|gemma|llama3|phi] [--author "Name"]
 //   tabtype-eval sweep <run.json>            (confidence-threshold tradeoff of a decoder run)
+//   tabtype-eval profiles <raw.json> --threshold 0.2 [--out directory]
+//       (replay careful/balanced/frequent on scores recorded with --extend 0)
+//   `run --style careful|balanced|frequent` uses the app's position-aware gate.
 //   tabtype-eval prompt --template <name> --cases <cases.jsonl> [--index N]   (print an assembled prompt)
 //   tabtype-eval catalog                     (models in the bundled catalog and how they fit this Mac)
 //   tabtype-eval download <model-id> [--dir path]
@@ -15,6 +18,7 @@
 //   TabType.app/Contents/MacOS/TabType --eval <cases.jsonl> --out <run.json>
 
 import Foundation
+import CryptoKit
 import TabTypeKit
 
 func fail(_ message: String) -> Never {
@@ -24,12 +28,13 @@ func fail(_ message: String) -> Never {
 
 let allArguments = Array(CommandLine.arguments.dropFirst())
 guard let command = allArguments.first else {
-    fail("usage: tabtype-eval {make-cases|smoke|run|report|sweep|prompt|catalog|download} …  (see Sources/TabTypeEval/main.swift)")
+    fail("usage: tabtype-eval {make-cases|smoke|run|report|sweep|profiles|prompt|catalog|download} …  (see Sources/TabTypeEval/main.swift)")
 }
 nonisolated(unsafe) let arguments = Array(allArguments.dropFirst())
 
 func option(_ name: String) -> String? {
-    guard let i = arguments.firstIndex(of: name), i + 1 < arguments.count else { return nil }
+    guard let i = arguments.firstIndex(of: name) else { return nil }
+    guard i + 1 < arguments.count, !arguments[i + 1].hasPrefix("--") else { fail("\(name) needs a value") }
     return arguments[i + 1]
 }
 func positional() -> String? {
@@ -43,14 +48,46 @@ func positional() -> String? {
 }
 func url(_ path: String) -> URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
 
+func digest(_ file: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: file)
+    defer { try? handle.close() }
+    var hash = SHA256()
+    while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty { hash.update(data: data) }
+    return hash.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+func probability(_ name: String, default value: Double) -> Double {
+    guard let input = option(name) else { return value }
+    guard let parsed = Double(input), parsed.isFinite, (0...1).contains(parsed) else {
+        fail("\(name) must be a finite probability between 0 and 1")
+    }
+    return parsed
+}
+
+func integer(_ name: String, default value: Int, range: ClosedRange<Int>) -> Int {
+    guard let input = option(name) else { return value }
+    guard let parsed = Int(input), range.contains(parsed) else { fail("\(name) must be an integer in \(range)") }
+    return parsed
+}
+
+func extensionThreshold(default value: Double) -> Double {
+    guard let input = option("--extend") else { return value }
+    guard let parsed = Double(input), parsed.isFinite, parsed >= 0 else { fail("--extend must be finite and nonnegative") }
+    return parsed
+}
+
 switch command {
 case "make-cases":
     guard let input = positional() else { fail("make-cases needs a corpus .jsonl path") }
     let corpus = try JSONL.read(CorpusEntry.self, from: url(input))
+    let seed = option("--seed").map { raw -> UInt64 in
+        guard let value = UInt64(raw) else { fail("--seed must be a nonnegative UInt64 integer") }
+        return value
+    } ?? 42
     let generator = CaseGenerator(
-        boundaryPerEntry: option("--boundary").flatMap(Int.init) ?? 4,
-        midwordPerEntry: option("--midword").flatMap(Int.init) ?? 2,
-        seed: option("--seed").flatMap(UInt64.init) ?? 42)
+        boundaryPerEntry: integer("--boundary", default: 4, range: 0...10_000),
+        midwordPerEntry: integer("--midword", default: 2, range: 0...10_000),
+        seed: seed)
     let cases = generator.cases(from: corpus)
     let out = url(option("--out") ?? "eval/cases.jsonl")
     try JSONL.write(cases, to: out)
@@ -58,16 +95,16 @@ case "make-cases":
 
 case "smoke":
     guard let modelPath = option("--model") else { fail("smoke needs --model <file.gguf>") }
-    let loadStart = Date()
-    let runtime = try LlamaRuntime(modelPath: modelPath)
-    print(String(format: "loaded %@ in %.2fs · vocab %d · splice %@", runtime.modelDescription,
-                 Date().timeIntervalSince(loadStart), runtime.vocab.count, runtime.supportsSplice ? "yes" : "no"))
     let texts = option("--text").map { [$0] } ?? [
         "Hey Priya, thanks for sending the dashboard over. I'll take a look ",
         "Hey Priya, thanks for sending the dashboard over. I'll take a lo",
         "Could you please doub",
         "Thank you for the quick turnar",
     ]
+    let loadStart = Date()
+    let runtime = try LlamaRuntime(modelPath: modelPath)
+    print(String(format: "loaded %@ in %.2fs · vocab %d · splice %@", runtime.modelDescription,
+                 Date().timeIntervalSince(loadStart), runtime.vocab.count, runtime.supportsSplice ? "yes" : "no"))
     var options = DecoderOptions()
     options.maxWords = 4
     for text in texts {
@@ -88,42 +125,93 @@ case "run":
         fail("run needs --model <file.gguf> --cases <cases.jsonl>")
     }
     var cases = try JSONL.read(EvalCase.self, from: url(casesPath))
-    if let limit = option("--limit").flatMap(Int.init) { cases = Array(cases.prefix(limit)) }
+    if let input = option("--limit") {
+        guard let limit = Int(input), limit >= 1 else { fail("--limit must be a positive integer") }
+        cases = Array(cases.prefix(limit))
+    }
+    guard !cases.isEmpty else { fail("case file is empty") }
+    let history = try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) }
+    let historyScope = option("--history-scope").flatMap(PersonalizationScope.init(rawValue:)) ?? .allApps
+    if let raw = option("--history-scope"), PersonalizationScope(rawValue: raw) == nil {
+        fail("--history-scope must be currentApp or allApps")
+    }
+    if let history {
+        // This mode excludes the case's source document. Reject an unrelated
+        // history file instead of silently leaking the test continuation.
+        for c in cases {
+            guard let entry = Int(c.id.split(separator: "-").first ?? ""), history.indices.contains(entry),
+                  history[entry].app == c.app, history[entry].category == c.category,
+                  history[entry].text.hasPrefix(c.prefix + c.truth) else {
+                fail("--history requires the source corpus for these cases (leave-one-document-out); mismatch at \(c.id)")
+            }
+        }
+    }
+    // Validate every option before creating Metal resources: fail()/exit()
+    // with a live llama runtime can otherwise abort during process teardown.
+    let backendName = option("--backend") ?? "decoder"
+    guard ["decoder", "greedy"].contains(backendName) else { fail("unknown backend \(backendName)") }
+    let author = option("--author") ?? "Nilava Chowdhury"
+    let outPath = option("--out")
+    let baseline = try option("--baseline").map { try EvalRunner.load(url($0)) }
+    var options = DecoderOptions()
+    let style = option("--style").flatMap(PredictionStyle.init(rawValue:))
+    if option("--style") != nil, style == nil { fail("--style must be careful, balanced, or frequent") }
+    if let style { options.extensionThreshold = style.extensionThreshold }
+    options.maxWords = integer("--max-words", default: options.maxWords, range: 1...32)
+    options.extensionThreshold = extensionThreshold(default: options.extensionThreshold)
+    options.candidates = integer("--candidates", default: options.candidates, range: 1...32)
+    options.beamWidth = integer("--beam", default: options.beamWidth, range: 1...64)
+    options.beamBranching = integer("--branch", default: options.beamBranching, range: 1...32)
+    if arguments.contains("--beam-all-first-words") { options.beamFromBestFirstWord = false }
+    let templateName = option("--template") ?? "legacy"
+    let template = templateName == "legacy" ? nil : ModelTemplate.named(templateName)
+    if templateName != "legacy", template == nil { fail("unknown template \(templateName)") }
+    let threshold = probability("--threshold", default: style == nil ? 0 : options.showThreshold)
+    let hintFactor = probability("--hint-factor", default: 0.5)
+    var configuration = ["casesSHA256": try digest(url(casesPath)),
+                         "modelSHA256": try digest(url(modelPath)),
+                         "engineBinarySHA256": try digest(Bundle.main.executableURL ?? url(CommandLine.arguments[0])),
+                         "caseCount": String(cases.count)]
+    if let path = option("--history") { configuration["historySHA256"] = try digest(url(path)) }
+    configuration["historyScope"] = historyScope.rawValue
     let runtime = try LlamaRuntime(modelPath: modelPath)
     let backend: CompletionBackend
-    switch option("--backend") ?? "decoder" {
+    switch backendName {
     case "greedy":
         backend = GreedyContinuationBackend(runtime: runtime)
     case "decoder":
-        var options = DecoderOptions()
-        if let n = option("--max-words").flatMap(Int.init) { options.maxWords = n }
-        if let p = option("--extend").flatMap(Double.init) { options.extensionThreshold = p }
-        if let k = option("--candidates").flatMap(Int.init) { options.candidates = k }
-        if let w = option("--beam").flatMap(Int.init) { options.beamWidth = w }
-        if let b = option("--branch").flatMap(Int.init) { options.beamBranching = b }
-        if arguments.contains("--beam-all-first-words") { options.beamFromBestFirstWord = false }
-        let templateName = option("--template") ?? "legacy"
-        let template = templateName == "legacy" ? nil : ModelTemplate.named(templateName)
-        if templateName != "legacy", template == nil { fail("unknown template \(templateName)") }
+        configuration.merge([
+            "template": templateName, "situationHeader": String(arguments.contains("--header")),
+            "author": author,
+            "noisyContext": String(arguments.contains("--noise")),
+            "sections": String(arguments.contains("--sections")),
+            "conversations": String(!arguments.contains("--plain-chat")),
+            "gate": style?.rawValue ?? "fixed", "baseShowThreshold": String(threshold),
+            "extensionThreshold": String(options.extensionThreshold), "maxWords": String(options.maxWords),
+            "candidates": String(options.candidates), "beamWidth": String(options.beamWidth),
+            "beamBranching": String(options.beamBranching),
+            "beamFromBestFirstWord": String(options.beamFromBestFirstWord),
+            "minFirstTokenProbability": String(options.minFirstTokenProbability),
+            "maxTokensPerWord": String(options.maxTokensPerWord), "hintBonus": String(options.hintBonus),
+            "hintFactor": String(hintFactor), "history": option("--history") == nil ? "none" : "leave-one-out",
+        ]) { _, new in new }
         backend = DecoderBackend(runtime: runtime, options: options,
-                                 threshold: option("--threshold").flatMap(Double.init) ?? 0,
+                                 threshold: threshold,
                                  template: template, templateName: templateName,
-                                 authorName: option("--author") ?? "Nilava Chowdhury",
+                                 authorName: author,
                                  situationHeader: arguments.contains("--header"),
                                  noisy: arguments.contains("--noise"),
                                  sections: arguments.contains("--sections"),
                                  conversations: !arguments.contains("--plain-chat"),
-                                 history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
-                                 hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
+                                 history: history, hintFactor: hintFactor, style: style, historyScope: historyScope)
     case let other:
         fail("unknown backend \(other)")
     }
-    let run = try await EvalRunner.run(cases, backend: backend) { done, total in
+    let run = try await EvalRunner.run(cases, backend: backend, configuration: configuration) { done, total in
         if done % 25 == 0 || done == total { print("  \(done)/\(total)") }
     }
-    let out = url(option("--out") ?? "eval/results/\(backend.name)-\(Int(Date().timeIntervalSince1970)).json")
+    let out = url(outPath ?? "eval/results/\(backend.name)-\(Int(Date().timeIntervalSince1970)).json")
     try EvalRunner.write(run, to: out)
-    let baseline = try option("--baseline").map { try EvalRunner.load(url($0)) }
     print(EvalReport.render(run, baseline: baseline))
     if let decoder = backend as? DecoderBackend, decoder.hintsOffered > 0 {
         print("personal history: hints offered \(decoder.hintsOffered), followed \(decoder.hintsUsed)")
@@ -135,6 +223,22 @@ case "report":
     let run = try EvalRunner.load(url(path))
     let baseline = try option("--baseline").map { try EvalRunner.load(url($0)) }
     print(EvalReport.render(run, baseline: baseline))
+
+case "profiles":
+    guard let path = positional() else { fail("profiles needs a decoder run recorded with --extend 0") }
+    let run = try EvalRunner.load(url(path))
+    let threshold = probability("--threshold", default: 0.2)
+    let hintFactor = probability("--hint-factor", default: 0.5)
+    print("Replayed decisions; latency remains the original inference measurement.")
+    for style in PredictionStyle.allCases {
+        let replay: EvalRun
+        do { replay = try EvalRunner.replay(run, style: style, baseThreshold: threshold, repeatedPhraseFactor: hintFactor) }
+        catch { fail("profiles needs complete word scores from a new decoder run with --extend 0") }
+        print("\n\(style.rawValue):\n" + EvalReport.render(replay))
+        if let out = option("--out") {
+            try EvalRunner.write(replay, to: url(out).appendingPathComponent(style.rawValue + ".json"))
+        }
+    }
 
 case "sweep":
     guard let path = positional() else { fail("sweep needs a run .json path") }
@@ -151,7 +255,8 @@ case "prompt":
     guard let casesPath = option("--cases"), let name = option("--template"),
           let template = ModelTemplate.named(name) else { fail("prompt needs --cases and a valid --template") }
     let cases = try JSONL.read(EvalCase.self, from: url(casesPath))
-    let c = cases[min(option("--index").flatMap(Int.init) ?? 0, cases.count - 1)]
+    guard !cases.isEmpty else { fail("case file is empty") }
+    let c = cases[integer("--index", default: 0, range: 0...(cases.count - 1))]
     print(PromptAssembler(template: template, situationHeader: arguments.contains("--header"))
         .assemble(c.promptContext(authorName: option("--author") ?? "Nilava Chowdhury",
                                   noisy: arguments.contains("--noise"))))

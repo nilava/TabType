@@ -1,3 +1,4 @@
+import TabTypeKit
 import Foundation
 
 /// A request to complete text at the caret — what `LlamaEngine` turns into a
@@ -22,12 +23,15 @@ struct CompletionRequest {
     var maxWords: Int
     /// Warm-up request: only prefill the prompt, produce nothing.
     var warmUpOnly: Bool = false
+    var appBundleId: String?
+    var predictionStyle: PredictionStyle?
     var appName: String = ""
     var windowTitle: String = ""
     var fieldPlaceholder: String = ""
     var authorName: String = ""
     /// Writing style + global + per-app custom instructions.
     var customInstructions: String = ""
-    /// Per-app opt-in to learning from writing (overrides a global "off").
+    /// Effective per-app choice for collecting and reusing writing, after
+    /// resolving the per-app override against the global preference.
     var learnsFromWriting: Bool = false
 }

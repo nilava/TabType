@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import TabTypeKit
 
 /// User-configurable settings, persisted in `UserDefaults`.
 /// Observable so SwiftUI views and the engine react to changes live.
@@ -13,10 +14,13 @@ final class AppSettings: ObservableObject {
 
     static let shared = AppSettings()
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     // MARK: General
     @Published var isEnabled: Bool { didSet { defaults.set(isEnabled, forKey: Keys.isEnabled) } }
+    @Published var predictionStyle: PredictionStyle {
+        didSet { defaults.set(predictionStyle.rawValue, forKey: Keys.predictionStyle) }
+    }
     /// Max words shown per suggestion (display cap — the main "length" knob).
     @Published var maxWords: Int { didSet { defaults.set(maxWords, forKey: Keys.maxWords) } }
     /// Ghost-text opacity, 0.15–1.0.
@@ -104,6 +108,9 @@ final class AppSettings: ObservableObject {
     }
 
     // MARK: Personalization
+    @Published var personalizationScope: PersonalizationScope {
+        didSet { defaults.set(personalizationScope.rawValue, forKey: Keys.personalizationScope) }
+    }
     @Published var authorName: String { didSet { defaults.set(authorName, forKey: Keys.authorName) } }
     @Published var writingStyle: String { didSet { defaults.set(writingStyle, forKey: Keys.writingStyle) } }
     @Published var customInstructions: String { didSet { defaults.set(customInstructions, forKey: Keys.customInstructions) } }
@@ -165,8 +172,10 @@ final class AppSettings: ObservableObject {
 
     // MARK: Apps (per-app enable/disable by bundle identifier)
 
-    private init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         isEnabled = defaults.object(forKey: Keys.isEnabled) as? Bool ?? true
+        predictionStyle = defaults.string(forKey: Keys.predictionStyle).flatMap(PredictionStyle.init(rawValue:)) ?? .balanced
         // The length setting is the source of truth (older builds stored 8 here).
         maxWords = AppSettings.words(for: defaults.string(forKey: Keys.completionLength) ?? "medium")
         ghostOpacity = defaults.object(forKey: Keys.ghostOpacity) as? Double ?? 0.45
@@ -190,6 +199,7 @@ final class AppSettings: ObservableObject {
         writingStyle = defaults.string(forKey: Keys.writingStyle) ?? ""
         customInstructions = defaults.string(forKey: Keys.customInstructions) ?? ""
         collectTypingHistory = defaults.object(forKey: Keys.collectTypingHistory) as? Bool ?? false
+        personalizationScope = defaults.string(forKey: Keys.personalizationScope).flatMap(PersonalizationScope.init(rawValue:)) ?? .currentApp
         personalizationStrength = defaults.string(forKey: Keys.personalizationStrength) ?? "balanced"
         alternativesAfterDelay = defaults.object(forKey: Keys.alternativesAfterDelay) as? Bool ?? false
         synonymsAfterDelay = defaults.object(forKey: Keys.synonymsAfterDelay) as? Bool ?? false
@@ -218,13 +228,13 @@ final class AppSettings: ObservableObject {
         let sysLang = Locale.current.language.languageCode?.identifier ?? "en"
         autocorrectLanguage = defaults.string(forKey: Keys.autocorrectLanguage)
             ?? (SpellChecker.supported.contains(sysLang) ? sysLang : "en")
-        acceptWordKey = AppSettings.loadBinding(Keys.acceptWordKey, default: .tab)
-        acceptAllKey = AppSettings.loadBinding(Keys.acceptAllKey, default: .shiftTab)
-        dismissKey = AppSettings.loadBinding(Keys.dismissKey, default: .escape)
-        toggleKey = AppSettings.loadBinding(Keys.toggleKey, default: .unset)
-        forceActivateKey = AppSettings.loadBinding(Keys.forceActivateKey, default: .controlBacktick)
-        appPauseKey = AppSettings.loadBinding(Keys.appPauseKey, default: .controlOptionCommandP)
-        wordAlternativesKey = AppSettings.loadBinding(Keys.wordAlternativesKey, default: .controlOptionSpace)
+        acceptWordKey = AppSettings.loadBinding(Keys.acceptWordKey, default: .tab, from: defaults)
+        acceptAllKey = AppSettings.loadBinding(Keys.acceptAllKey, default: .shiftTab, from: defaults)
+        dismissKey = AppSettings.loadBinding(Keys.dismissKey, default: .escape, from: defaults)
+        toggleKey = AppSettings.loadBinding(Keys.toggleKey, default: .unset, from: defaults)
+        forceActivateKey = AppSettings.loadBinding(Keys.forceActivateKey, default: .controlBacktick, from: defaults)
+        appPauseKey = AppSettings.loadBinding(Keys.appPauseKey, default: .controlOptionCommandP, from: defaults)
+        wordAlternativesKey = AppSettings.loadBinding(Keys.wordAlternativesKey, default: .controlOptionSpace, from: defaults)
 
         Log.shared.verbose = verboseLog
         AppPolicyStore.userOverrides = appOverrides
@@ -233,8 +243,8 @@ final class AppSettings: ObservableObject {
     private func saveBinding(_ b: KeyBinding, _ key: String) {
         if let data = try? JSONEncoder().encode(b) { defaults.set(data, forKey: key) }
     }
-    private static func loadBinding(_ key: String, default def: KeyBinding) -> KeyBinding {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    private static func loadBinding(_ key: String, default def: KeyBinding, from defaults: UserDefaults) -> KeyBinding {
+        guard let data = defaults.data(forKey: key),
               let b = try? JSONDecoder().decode(KeyBinding.self, from: data) else { return def }
         return b
     }
@@ -264,12 +274,14 @@ final class AppSettings: ObservableObject {
         static let showMenuBarIcon = "showMenuBarIcon"
         static let showAccessoryButton = "showAccessoryButton"
         static let completionLength = "completionLength"
+        static let predictionStyle = "predictionStyle"
         static let disableMacOSPredictiveText = "disableMacOSPredictiveText"
         static let authorName = "authorName"
         static let writingStyle = "writingStyle"
         static let customInstructions = "customInstructions"
         static let collectTypingHistory = "collectTypingHistory"
         static let personalizationStrength = "personalizationStrength"
+        static let personalizationScope = "personalizationScope"
         static let alternativesAfterDelay = "alternativesAfterDelay"
         static let synonymsAfterDelay = "synonymsAfterDelay"
         static let labsDelay = "labsDelay"

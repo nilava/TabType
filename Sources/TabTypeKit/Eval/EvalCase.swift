@@ -64,9 +64,17 @@ public struct CaseResult: Codable, Sendable, Equatable {
     /// The backend's confidence in its first word, when it reports one — lets
     /// `tabtype-eval sweep` tune the show threshold from a single ungated run.
     public var confidence: Double?
+    /// Decoder scores before the show gate. Complete phrase replay requires
+    /// extensionThreshold == 0; older runs leave these fields nil.
+    public var words: [WordScore]?
+    public var followsHint: Bool?
+    public var hintSupport: Int?
+    public var midword: Bool?
 
     public init(id: String, category: String, kind: SplitKind, suggestion: String,
-                truth: String, score: CaseScore, latencyMs: Double, confidence: Double? = nil) {
+                truth: String, score: CaseScore, latencyMs: Double, confidence: Double? = nil,
+                words: [WordScore]? = nil, followsHint: Bool? = nil,
+                hintSupport: Int? = nil, midword: Bool? = nil) {
         self.id = id
         self.category = category
         self.kind = kind
@@ -75,6 +83,10 @@ public struct CaseResult: Codable, Sendable, Equatable {
         self.score = score
         self.latencyMs = latencyMs
         self.confidence = confidence
+        self.words = words
+        self.followsHint = followsHint
+        self.hintSupport = hintSupport
+        self.midword = midword
     }
 }
 
@@ -86,14 +98,17 @@ public struct EvalRun: Codable, Sendable {
     public var date: Date
     public var summary: EvalSummary
     public var results: [CaseResult]
+    /// Effective run parameters, without retrieved private hint text.
+    public var configuration: [String: String]?
 
     public init(backend: String, model: String, date: Date = Date(),
-                summary: EvalSummary, results: [CaseResult]) {
+                summary: EvalSummary, results: [CaseResult], configuration: [String: String]? = nil) {
         self.backend = backend
         self.model = model
         self.date = date
         self.summary = summary
         self.results = results
+        self.configuration = configuration
     }
 }
 
