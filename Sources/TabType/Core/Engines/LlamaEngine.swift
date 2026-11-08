@@ -14,10 +14,7 @@ final class LlamaEngine {
 
     /// Recent results by exact prompt + options: re-typing, deleting back, or a
     /// repeat request for unchanged input is answered without running the model.
-    private var recent: [String: (result: TabTypeKit.CompletionResult, at: Date)] = [:]
-    private var recentOrder: [String] = []
-    private static let recentCapacity = 200
-    private static let recentLifetime: TimeInterval = 30
+    private var recent = CompletionCache()
 
     init(models: LlamaModelManager = .shared) {
         self.models = models
@@ -29,6 +26,9 @@ final class LlamaEngine {
 
     func complete(_ request: CompletionRequest) async -> String? {
         guard let template = models.template, var options = models.decoderOptions else { return nil }
+        let style = request.predictionStyle
+            ?? AppSettings.shared.predictionStyle
+        options.extensionThreshold = style.extensionThreshold
         let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
 
         // Warm-ups only prefill the prompt into the cache.
@@ -40,19 +40,19 @@ final class LlamaEngine {
         options.maxWords = max(1, request.maxWords)
         // What the author wrote after these words before, if they opted in.
         var hintSupport = 0
-        if AppSettings.shared.collectTypingHistory || request.learnsFromWriting,
-           let hint = PersonalIndex.shared.hint(after: request.beforeCursor) {
+        if let hint = PersonalIndex.shared.hint(after: request.beforeCursor, bundleId: request.appBundleId ?? "",
+            scope: AppSettings.shared.personalizationScope, enabled: request.learnsFromWriting) {
             options.hint = Array(hint.text.utf8)
             options.hintBonus = AppSettings.shared.personalization.bonus
             hintSupport = hint.support
         }
-        let cacheKey = "\(models.loadedID ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
+        let cacheKey = CompletionCache.Key(modelID: models.loadedID ?? "", options: options, prompt: text)
         let start = Date()
         let result: TabTypeKit.CompletionResult
         let cached: Bool
-        if let hit = recent[cacheKey], Date().timeIntervalSince(hit.at) < Self.recentLifetime {
+        if let hit = recent.result(for: cacheKey) {
             _ = models.inference.beginRequest()   // still supersedes older work
-            result = hit.result
+            result = hit
             cached = true
         } else {
             let id = models.inference.beginRequest()
@@ -61,21 +61,18 @@ final class LlamaEngine {
             }
             result = fresh
             cached = false
-            remember(fresh, key: cacheKey)
         }
+        if !cached { recent.insert(result, for: cacheKey) }
         lastResult = result
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        // Measured on the author's own writing (867 cases from their real typing):
-        // finishing a half-typed word is right far more often than guessing the
-        // next one (53–65% vs 21–32% when shown), so mid-word gets the low bar
-        // (×0.4 → 0.08) and a word boundary the higher one (×0.75 → 0.15). Versus
-        // 0.10 / 0.15: same characters saved, fewer wrong ghosts on both their
-        // writing (42.0 → 37.4%) and seed-v1 (30.7 → 28.6%).
-        let midWord = request.beforeCursor.last.map { $0.isLetter || $0.isNumber } ?? false
-        var threshold = options.showThreshold * (midWord ? 0.4 : 0.75)
-        // A phrase the author has used repeatedly earns a lower bar still (eval:
-        // +13% accepted characters on a repeat-writer set).
-        if result.followsHint && hintSupport >= 2 { threshold *= AppSettings.shared.personalization.repeatedPhraseBar }
+        // Shared with the evaluator: Balanced retains the historical boundary
+        // and midword bars; the other styles trade suggestion frequency for
+        // precision. The model's first-word confidence is not a correctness rate.
+        let midWord = PredictionStyle.isMidword(request.beforeCursor)
+        // Repeated learned phrases keep the existing personalization discount.
+        let threshold = style.threshold(base: options.showThreshold, midword: midWord,
+            followsHint: result.followsHint, hintSupport: hintSupport,
+            repeatedPhraseFactor: AppSettings.shared.personalization.repeatedPhraseBar)
         // Lookahead (speculative) results stay out of the statistics.
         let quiet = request.speculative
         guard result.confidence >= threshold else {
@@ -90,16 +87,10 @@ final class LlamaEngine {
         return result.text
     }
 
-    private func remember(_ result: TabTypeKit.CompletionResult, key: String) {
-        if recent[key] == nil { recentOrder.append(key) }
-        recent[key] = (result, Date())
-        while recentOrder.count > Self.recentCapacity { recent[recentOrder.removeFirst()] = nil }
-    }
-
     /// Forget cached results (model or settings changed).
     func clearRecent() {
+        lastResult = nil
         recent.removeAll()
-        recentOrder.removeAll()
     }
 
     /// Words that fit in place of `word`, given the text before it — the word

@@ -76,31 +76,39 @@ final class DecoderBackend: CompletionBackend {
     private let runtime: LlamaRuntime
     private let options: DecoderOptions
     private let threshold: Double
+    private let style: PredictionStyle?
     /// nil: the Phase 0/2 document prompt (`EvalPrompt`), kept for comparison.
     private let assembler: PromptAssembler?
     private let authorName: String?
     /// Leave-one-out personal history: each case retrieves only from OTHER corpus
     /// entries (case ids start with their entry index).
     private let history: [CorpusEntry]?
+    private let historyScope: PersonalizationScope
     private let hintFactor: Double
     private let noisy: Bool
     private let conversations: Bool
-    private var indexes: [Int: SuffixIndex] = [:]
+    private var indexes: [Int: ScopedSuffixIndex] = [:]
     private(set) var hintsOffered = 0
     private(set) var hintsUsed = 0
     private(set) var lastConfidence: Double?
+    private(set) var lastWords: [WordScore]?
+    private(set) var lastFollowsHint = false
+    private(set) var lastHintSupport = 0
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
          template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
          noisy: Bool = false, sections: Bool = false, conversations: Bool = true,
-         history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
+         history: [CorpusEntry]? = nil, hintFactor: Double = 0.5, style: PredictionStyle? = nil,
+         historyScope: PersonalizationScope = .allApps) {
         self.noisy = noisy
         self.conversations = conversations
         self.history = history
+        self.historyScope = historyScope
         self.hintFactor = hintFactor
         self.runtime = runtime
         self.options = options
         self.threshold = threshold
+        self.style = style
         let counter: @Sendable (String) -> Int = { [runtime] in runtime.tokenize($0, addSpecial: false, parseSpecial: false).count }
         self.assembler = template.map { PromptAssembler(template: $0, situationHeader: situationHeader,
                                                         sections: sections, tokenCount: sections ? counter : nil) }
@@ -116,10 +124,14 @@ final class DecoderBackend: CompletionBackend {
         var options = self.options
         var support = 0
         if let history, let entry = Int(evalCase.id.split(separator: "-").first ?? "") {
-            let index = indexes[entry] ?? SuffixIndex(documents: history.enumerated()
-                .filter { $0.offset != entry }.map(\.element.text))
+            let index = indexes[entry] ?? ScopedSuffixIndex(documents: history.enumerated()
+                .filter { $0.offset != entry }
+                .map { .init(bundleId: $0.element.app ?? "", text: $0.element.text) })
             indexes[entry] = index
-            if let hint = index.continuation(after: evalCase.prefix) {
+            // App-less cases cannot establish a current-app boundary.
+            let hint = (historyScope == .currentApp && evalCase.app == nil) ? nil
+                : index.continuation(after: evalCase.prefix, bundleId: evalCase.app ?? "", scope: historyScope)
+            if let hint {
                 options.hint = Array(hint.text.utf8)
                 support = hint.support
                 hintsOffered += 1
@@ -128,7 +140,12 @@ final class DecoderBackend: CompletionBackend {
         let result = try CompletionDecoder.complete(text, model: runtime, options: options)
         if result?.followsHint == true { hintsUsed += 1 }
         lastConfidence = result?.confidence ?? 0
-        let gate = (result?.followsHint == true && support >= 2) ? threshold * hintFactor : threshold
+        lastWords = result?.words ?? []
+        lastFollowsHint = result?.followsHint ?? false
+        lastHintSupport = support
+        let gate = style?.threshold(base: threshold, midword: PredictionStyle.isMidword(evalCase.prefix),
+            followsHint: lastFollowsHint, hintSupport: support, repeatedPhraseFactor: hintFactor)
+            ?? ((lastFollowsHint && support >= 2) ? threshold * hintFactor : threshold)
         guard let result, result.confidence >= gate else { return nil }
         return result.text
     }

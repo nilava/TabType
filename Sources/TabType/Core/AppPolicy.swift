@@ -1,4 +1,5 @@
 import Foundation
+import TabTypeKit
 
 enum InsertionStrategy {
     case auto        // keystroke, upgrading to paste for long/multiline text
@@ -79,6 +80,7 @@ struct AppPolicy {
     var autocorrectOverride: Bool?
     /// Extra instructions appended to the model persona for this app.
     var customInstructions: String = ""
+    var predictionStyle: PredictionStyle?
     /// Long-form writing apps: the surrounding document is the context that
     /// matters — bigger caret window + document-head anchoring.
     var documentProfile: Bool = false
@@ -114,6 +116,7 @@ extension AppPolicy {
     var summaryLines: [String] {
         guard isEnabled else { return ["Completions are turned off for this app."] }
         var lines: [String] = []
+        if let predictionStyle { lines.append("Prediction style: \(predictionStyle.rawValue.capitalized).") }
         switch profile {
         case .chat:
             lines.append(transcriptViaAX
@@ -186,6 +189,9 @@ struct AppOverride: Codable, Equatable {
     var straightQuotes: Bool?
     /// Grey ghost text instead of the app's own text colour.
     var greySuggestion: Bool?
+    /// Optional string keeps unknown future style values from breaking decoding
+    /// of the whole override (including an explicit app disable).
+    var predictionStyle: String?
 
     var isDefault: Bool {
         enabled == nil && midLineEnabled == nil && autocorrectEnabled == nil
@@ -195,7 +201,7 @@ struct AppOverride: Codable, Equatable {
             && textMirror == nil && ignoreSizeThresholds == nil
             && insertionChunkSize == nil && nonBreakingSpaces == nil && spaceKeyEvents == nil
             && pasteMatchStyle == nil && backspaceAfterPaste == nil && straightQuotes == nil
-            && greySuggestion == nil
+            && greySuggestion == nil && predictionStyle == nil
     }
 }
 
@@ -329,6 +335,7 @@ enum AppPolicyStore {
             policy.autocorrectOverride = o.autocorrectEnabled
             if o.improveCompatibility { policy.insertionStrategy = .paste }
             policy.customInstructions = o.customInstructions
+            policy.predictionStyle = o.predictionStyle.flatMap(PredictionStyle.init(rawValue:))
             if let scale = o.ghostFontScale { policy.fontFactor *= scale }
             if let offset = o.ghostVerticalOffset { policy.verticalOffset += offset }
             if let mirror = o.textMirror { policy.textMirror = mirror }
@@ -400,6 +407,7 @@ enum AppPolicyStore {
         if let (_, o) = match {
             if let e = o.enabled { policy.isEnabled = e }
             if let m = o.midLineEnabled { policy.allowsMidLine = m }
+            if let style = o.predictionStyle.flatMap(PredictionStyle.init(rawValue:)) { policy.predictionStyle = style }
             if !o.customInstructions.isEmpty {
                 policy.customInstructions = policy.customInstructions.isEmpty
                     ? o.customInstructions

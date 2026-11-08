@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import TabTypeKit
 
 struct SettingsView: View {
     enum Section: String, CaseIterable, Identifiable {
@@ -135,6 +136,13 @@ struct GeneralSettingsView: View {
             }
 
             Section("Accepting") {
+                Picker("Prediction style", selection: $settings.predictionStyle) {
+                    ForEach(PredictionStyle.allCases, id: \.self) { style in
+                        Text(style.rawValue.capitalized).tag(style)
+                    }
+                }
+                Text("Careful shows fewer guesses and shorter phrases. Frequent shows more often and keeps longer phrases. Balanced keeps the usual behavior.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Completion length", selection: $settings.completionLength) {
                     Text("Short (1–2 words)").tag("short")
                     Text("Medium (2–4 words)").tag("medium")
@@ -387,11 +395,20 @@ private struct AppOverrideDetail: View {
             }
             Section("Completions") {
                 TriStatePicker(title: "Enable completions", value: $override.enabled)
+                Picker("Prediction style", selection: Binding(
+                    get: { override.predictionStyle.flatMap(PredictionStyle.init(rawValue:))?.rawValue ?? "default" },
+                    set: { override.predictionStyle = $0 == "default" ? nil : $0 }
+                )) {
+                    Text("Default").tag("default")
+                    ForEach(PredictionStyle.allCases, id: \.self) { style in
+                        Text(style.rawValue.capitalized).tag(style.rawValue)
+                    }
+                }
                 TriStatePicker(title: "Mid-line completions", value: $override.midLineEnabled)
                 Text("Mid-line: show completions even when there's text after the cursor on the same line.")
                     .font(.caption).foregroundStyle(.secondary)
                 TriStatePicker(title: "Autocorrect", value: $override.autocorrectEnabled)
-                TriStatePicker(title: "Learn from my writing here", value: $override.learnFromWriting)
+                TriStatePicker(title: "Learn and reuse my writing here", value: $override.learnFromWriting)
                 TriStatePicker(title: "Disable Tab key", value: $override.disableTabKey,
                               onLabel: "Disabled", offLabel: "Enabled")
                 Text("Turn this on for apps where Tab has important native functionality (e.g. indenting, switching fields).")

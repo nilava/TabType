@@ -35,11 +35,11 @@ final class WritingStore: ObservableObject {
     private var keyURL: URL { directory.appendingPathComponent("history.key") }
     private var legacyHistoryURL: URL { directory.appendingPathComponent("typing-history.enc") }
 
-    private init() {
-        directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    init(directory: URL? = nil) {
+        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TabType", isDirectory: true)
         load()
-        importLegacyHistory()
+        if directory == nil { importLegacyHistory() }
     }
 
     var texts: [String] { documents.map(\.text) }
@@ -49,7 +49,7 @@ final class WritingStore: ObservableObject {
         guard clean.count >= minimumLength else { return }
         switch kind {
         case .message:
-            guard documents.last?.text != clean else { return }
+            guard documents.last?.text != clean || documents.last?.bundleId != bundleId else { return }
             documents.append(Document(key: "msg:\(UUID().uuidString)", bundleId: bundleId, text: clean, updated: Date()))
         case .field:
             let key = "field:\(bundleId)|\(fieldKey ?? "")"
@@ -181,26 +181,38 @@ final class WritingStore: ObservableObject {
 @MainActor
 final class PersonalIndex {
     static let shared = PersonalIndex()
-    private(set) var index: SuffixIndex?
+    private(set) var index: ScopedSuffixIndex?
     private var rebuild: Task<Void, Never>?
+    private let store: WritingStore
+    private let rebuildDelay: TimeInterval
+
+    init(store: WritingStore = .shared, rebuildDelay: TimeInterval = 5) {
+        self.store = store
+        self.rebuildDelay = rebuildDelay
+    }
 
     func start() {
-        WritingStore.shared.onChange = { [weak self] in self?.scheduleRebuild() }
+        store.onChange = { [weak self] in self?.scheduleRebuild() }
         scheduleRebuild(delay: 0)
     }
 
-    func hint(after typed: String) -> RetrievalHint? { index?.continuation(after: typed) }
+    func hint(after typed: String, bundleId: String, scope: PersonalizationScope, enabled: Bool) -> RetrievalHint? {
+        guard enabled else { return nil }
+        return index?.continuation(after: typed, bundleId: bundleId, scope: scope)
+    }
 
-    private func scheduleRebuild(delay: TimeInterval = 5) {
+    private func scheduleRebuild(delay: TimeInterval? = nil) {
         rebuild?.cancel()
-        let texts = WritingStore.shared.texts
+        index = nil
+        let documents = store.allDocuments.map { ScopedSuffixIndex.Document(bundleId: $0.bundleId, text: $0.text) }
+        let delay = delay ?? rebuildDelay
         rebuild = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             guard !Task.isCancelled else { return }
-            let built = await Task.detached(priority: .utility) { SuffixIndex(documents: texts) }.value
+            let built = await Task.detached(priority: .utility) { ScopedSuffixIndex(documents: documents) }.value
             guard !Task.isCancelled else { return }
             self?.index = built.isEmpty ? nil : built
-            Log.shared.debug("personal index: \(texts.count) documents, \(built.byteCount) bytes")
+            Log.shared.debug("personal index: \(documents.count) documents, \(built.byteCount) indexed bytes")
         }
     }
 }

@@ -1,7 +1,7 @@
 import Accelerate
 import Foundation
 
-public struct DecoderOptions: Sendable, Equatable {
+public struct DecoderOptions: Sendable, Equatable, Hashable {
     /// First-step fan-out: how many distinct first tokens are explored in parallel.
     public var candidates = 4
     /// First tokens below this probability are not explored.
@@ -44,7 +44,7 @@ public struct DecoderOptions: Sendable, Equatable {
 
 /// One word of a suggestion with the model's probability for it (conditional on
 /// everything before it).
-public struct WordScore: Sendable, Equatable {
+public struct WordScore: Sendable, Equatable, Codable {
     public var text: String
     public var probability: Double
 }
@@ -361,12 +361,10 @@ private struct Session {
             root = phrase.root
             let first = merged[root]
             words = [WordScore(text: first.text, probability: exp(first.logP))]
-            for (bytes, lp) in zip(phrase.words.dropFirst(), phrase.wordLogProbabilities.dropFirst()) {
-                // Trailing words stay only while each is likely enough given the
-                // ones before it.
-                guard exp(lp) >= options.extensionThreshold else { break }
-                words.append(WordScore(text: String(decoding: bytes, as: UTF8.self), probability: exp(lp)))
+            words += zip(phrase.words.dropFirst(), phrase.wordLogProbabilities.dropFirst()).map {
+                WordScore(text: String(decoding: $0.0, as: UTF8.self), probability: exp($0.1))
             }
+            words = ScoredPhrase.prefix(words, extensionThreshold: options.extensionThreshold)
             trailingSpace = phrase.trailingSpace
         }
         let chosen = merged[root]

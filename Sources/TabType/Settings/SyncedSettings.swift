@@ -1,4 +1,5 @@
 import Foundation
+import TabTypeKit
 
 /// The preferences that follow the author between Macs (machine-specific ones —
 /// menu bar icon, accessory button, logging, enabled state — stay local).
@@ -20,6 +21,8 @@ struct SyncedSettings: Codable, Equatable {
     var recordWithoutAccepts, collectTypingHistory: Bool
     var disabledDomains: Set<String>
     var appOverrides: [String: AppOverride]
+    var predictionStyle: String?
+    var personalizationScope: String?
 }
 
 extension AppSettings {
@@ -42,7 +45,8 @@ extension AppSettings {
             alternativesAfterDelay: alternativesAfterDelay, synonymsAfterDelay: synonymsAfterDelay, labsDelay: labsDelay,
             personalizationStrength: personalizationStrength,
             recordWithoutAccepts: recordWithoutAccepts, collectTypingHistory: collectTypingHistory,
-            disabledDomains: disabledDomains, appOverrides: appOverrides)
+            disabledDomains: disabledDomains, appOverrides: appOverrides,
+            predictionStyle: predictionStyle.rawValue, personalizationScope: personalizationScope.rawValue)
     }
 
     func apply(_ s: SyncedSettings) {
@@ -66,5 +70,9 @@ extension AppSettings {
         personalizationStrength = s.personalizationStrength
         recordWithoutAccepts = s.recordWithoutAccepts; collectTypingHistory = s.collectTypingHistory
         disabledDomains = s.disabledDomains; appOverrides = s.appOverrides
+        if let style = s.predictionStyle.flatMap(PredictionStyle.init(rawValue:)) { predictionStyle = style }
+        // Older peers omit this preference. An unknown explicit scope must not
+        // broaden reuse to all apps; keep the stricter current-app boundary.
+        if let raw = s.personalizationScope { personalizationScope = PersonalizationScope(rawValue: raw) ?? .currentApp }
     }
 }
