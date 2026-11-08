@@ -100,7 +100,14 @@ enum AccessibilityBridge {
     static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
-        let err = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused)
+        var err = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused)
+        // Safari can return cannotComplete for the system-wide lookup while its
+        // frontmost application still publishes a valid focused element.
+        if err == .cannotComplete, let front = NSWorkspace.shared.frontmostApplication {
+            let app = AXUIElementCreateApplication(front.processIdentifier)
+            AXUIElementSetMessagingTimeout(app, 0.05)
+            err = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused)
+        }
         guard err == .success, let focused else { return nil }
         let element = focused as! AXUIElement
         // Bound AX round-trips so a stalled app can't beach-ball us.
@@ -233,6 +240,17 @@ enum AccessibilityBridge {
         var range = CFRange()
         guard AXValueGetValue(value as! AXValue, .cfRange, &range) else { return nil }
         return range.location
+    }
+
+    /// Destructive inline replacement requires a proven insertion point, rather
+    /// than treating a selection's start (or an unavailable range) as a caret.
+    static func hasCollapsedCaret(of element: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID() else { return false }
+        var range = CFRange()
+        return AXValueGetValue(value as! AXValue, .cfRange, &range)
+            && range.location >= 0 && range.length == 0
     }
 
     /// Whether there's text after the caret (rough proxy for "mid-line": the caret

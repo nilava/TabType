@@ -9,8 +9,8 @@ struct ContextPane: View {
     var body: some View {
         Form {
             Section("Screen Context") {
-                Toggle("Read on-screen context", isOn: $settings.useScreenContext)
-                Text("Reads the conversation or document around your cursor — via the accessibility tree in chat apps, or an on-device screenshot elsewhere — so suggestions match what you're working on. Chat apps like Slack and Claude always use this.")
+                Toggle("Use screenshots for document context", isOn: $settings.useScreenContext)
+                Text("Reads nearby text from the focused window using on-device screenshots. Turning this off stops screenshot context. Conversation reading in chat apps is controlled separately in Apps and uses Accessibility.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("TabType picks a context recipe per app: the conversation in chat apps and chat websites (accessibility tree, no screenshots), your document in writing apps, and nearby on-screen text elsewhere. Open the Apps section to see exactly what applies to each app — and to change it.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -20,7 +20,7 @@ struct ContextPane: View {
             }
             Section("Clipboard Settings") {
                 Toggle("Use clipboard for context", isOn: $settings.useClipboardContext)
-                Text("Reads your clipboard to understand what you're working with. Processed locally; never stored or sent anywhere.")
+                Text("Uses recent clipboard text as local model context. Turn this off to keep the clipboard out of suggestions.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -261,7 +261,7 @@ struct PersonalizationPane: View {
             SyncSection()
             Section("Learn from your writing") {
                 Toggle("Learn from what I write", isOn: $settings.collectTypingHistory)
-                Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")
+                Text("TabType can retain your writing to reuse familiar words and phrases. It attempts to remove recognizable secrets, but cannot detect every sensitive detail. Writing is encrypted on this Mac; optional sync sends an encrypted copy through iCloud Drive. Control learning for each app in Apps. This history is shared across apps, without separate memory for each contact.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Personalization strength", selection: $settings.personalizationStrength) {
                     Text("Gentle").tag("gentle")
@@ -440,9 +440,9 @@ struct AboutPane: View {
             }
             UpdatesSection()
             Section("Privacy") {
-                Label("Runs 100% on your Mac. No cloud, no account, no telemetry.",
+                Label("Local inference, with optional encrypted iCloud sync. No TabType account required.",
                       systemImage: "lock.shield")
-                Label("Your text and screen content never leave the device.",
+                Label("Suggestions run on this Mac. Optional sync shares encrypted settings and learned writing through iCloud Drive.",
                       systemImage: "hand.raised")
                 Label("Password fields are never autocompleted.",
                       systemImage: "key.slash")
@@ -480,19 +480,27 @@ struct AboutPane: View {
 private struct LearnedWritingRow: View {
     @ObservedObject private var store = WritingStore.shared
     @State private var confirming = false
+    @State private var eraseError: String?
 
     var body: some View {
         HStack {
             Text(store.documentCount == 0
                  ? "Nothing learned yet."
-                 : "Learned from \(store.documentCount) pieces of writing (\(ByteCountFormatter.string(fromByteCount: Int64(store.characterCount), countStyle: .file))).")
+                 : "Learned from \(store.documentCount) pieces of writing (\(store.characterCount.formatted()) characters).")
                 .font(.callout).foregroundStyle(.secondary)
             Spacer()
             Button("Erase…", role: .destructive) { confirming = true }
                 .disabled(store.documentCount == 0)
         }
-        .confirmationDialog("Erase everything TabType learned from your writing?", isPresented: $confirming) {
-            Button("Erase", role: .destructive) { store.eraseAll() }
+        .alert("Could not erase all learned writing", isPresented: Binding(
+            get: { eraseError != nil }, set: { if !$0 { eraseError = nil } })) {
+                Button("OK") { eraseError = nil }
+            } message: { Text(eraseError ?? "") }
+        .confirmationDialog("Erase learned writing on this Mac and sync its deletion? Update all your Macs first. Offline copies and backups must be erased separately.", isPresented: $confirming) {
+            Button("Erase", role: .destructive) {
+                do { try store.eraseAll() }
+                catch { eraseError = error.localizedDescription }
+            }
         }
     }
 }

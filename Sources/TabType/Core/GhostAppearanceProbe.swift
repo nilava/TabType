@@ -158,10 +158,12 @@ final class GhostAppearanceProbe: ObservableObject {
     /// Screenshot of `rect` (top-left global points) at the display's real pixel
     /// scale, with TabType's own windows excluded so the ghost never sees itself.
     nonisolated static func captureScaled(rect: CGRect) async -> (image: CGImage, scale: Double)? {
-        guard let origin = await ContentAccessPolicy.current(),
+        guard await AppSettings.shared.useScreenshotAppearance,
+              let origin = await ContentAccessPolicy.current(),
               let window = origin.windowFrame, window.contains(rect) else { return nil }
         guard let content = await ShareableContentCache.shared.content() else { return nil }
-        guard await ContentAccessPolicy.isCurrent(origin) else { return nil }
+        guard await AppSettings.shared.useScreenshotAppearance,
+              await ContentAccessPolicy.isCurrent(origin) else { return nil }
         guard let display = content.displays.first(where: { displayRectTopLeft($0).intersects(rect) })
                 ?? content.displays.first else { return nil }
         guard let index = ContentAccessPolicy.windowIndex(pid: origin.pid, frame: window,
@@ -185,7 +187,8 @@ final class GhostAppearanceProbe: ObservableObject {
         config.showsCursor = false
         guard let full = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         else { return nil }
-        guard await ContentAccessPolicy.isCurrent(origin) else { return nil }
+        guard await AppSettings.shared.useScreenshotAppearance,
+              await ContentAccessPolicy.isCurrent(origin) else { return nil }
         let crop = CGRect(x: ((local.minX - integral.minX) * scale).rounded(),
                           y: ((local.minY - integral.minY) * scale).rounded(),
                           width: (local.width * scale).rounded(),

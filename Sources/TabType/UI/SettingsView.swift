@@ -174,7 +174,7 @@ struct ModelSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Label("Suggestions come from a model that runs entirely on this Mac — nothing is sent anywhere. It shows a suggestion only when it's confident, and completes half-typed words.",
+                Label("Suggestions are generated on this Mac. Optional encrypted iCloud sync shares settings and learned writing; it does not run the model in the cloud.",
                       systemImage: "cpu")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -477,6 +477,7 @@ private struct AppOverrideDetail: View {
 private struct DomainsPane: View {
     @EnvironmentObject var settings: AppSettings
     @State private var newDomain = ""
+    @State private var domainError: String?
 
     var body: some View {
         Form {
@@ -508,6 +509,14 @@ private struct DomainsPane: View {
                     Button("Add", action: addDomain)
                         .disabled(newDomain.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                if let domainError {
+                    Label(domainError, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.red).font(.caption)
+                }
+                if settings.disabledDomains.contains(where: { WebsiteRule.host(from: $0) == nil }) {
+                    Label("An invalid saved exclusion has paused browser context. Remove it below and add a valid website address.", systemImage: "exclamationmark.shield")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(Array(settings.disabledDomains).sorted(), id: \.self) { domain in
                     HStack {
                         Image(systemName: "globe").foregroundStyle(.secondary)
@@ -517,6 +526,7 @@ private struct DomainsPane: View {
                             settings.disabledDomains.remove(domain)
                         } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove exclusion for " + domain)
                     }
                 }
             }
@@ -532,6 +542,9 @@ private struct DomainsPane: View {
                     Button("Add", action: addDomainInstructions)
                         .disabled(newInstructionDomain.trimmingCharacters(in: .whitespaces).isEmpty
                                   || newInstructionText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let domainError {
+                    Label(domainError, systemImage: "exclamationmark.circle").foregroundStyle(.red).font(.caption)
                 }
                 ForEach(domainInstructionKeys, id: \.self) { key in
                     let host = String(key.dropFirst("domain:".count))
@@ -562,10 +575,10 @@ private struct DomainsPane: View {
     }
 
     private func addDomainInstructions() {
-        var d = newInstructionDomain.trimmingCharacters(in: .whitespaces).lowercased()
-        d = d.replacingOccurrences(of: "https://", with: "")
-             .replacingOccurrences(of: "http://", with: "")
-        if let slash = d.firstIndex(of: "/") { d = String(d[..<slash]) }
+        guard let d = WebsiteRule.host(from: newInstructionDomain) else {
+            domainError = "Enter a website host or an http(s) URL. Subdomains are included."
+            return
+        }
         let text = newInstructionText.trimmingCharacters(in: .whitespaces)
         guard !d.isEmpty, !text.isEmpty else { return }
         var override = settings.appOverrides[AppPolicyStore.domainKey(d)] ?? AppOverride()
@@ -573,16 +586,17 @@ private struct DomainsPane: View {
         settings.appOverrides[AppPolicyStore.domainKey(d)] = override
         newInstructionDomain = ""
         newInstructionText = ""
+        domainError = nil
     }
 
     private func addDomain() {
-        var d = newDomain.trimmingCharacters(in: .whitespaces).lowercased()
-        d = d.replacingOccurrences(of: "https://", with: "")
-             .replacingOccurrences(of: "http://", with: "")
-        if let slash = d.firstIndex(of: "/") { d = String(d[..<slash]) }
-        guard !d.isEmpty else { return }
+        guard let d = WebsiteRule.host(from: newDomain) else {
+            domainError = "Enter a website host or an http(s) URL. Subdomains are included."
+            return
+        }
         settings.disabledDomains.insert(d)
         newDomain = ""
+        domainError = nil
     }
 }
 
@@ -590,27 +604,36 @@ private struct DomainsPane: View {
 
 struct AdvancedSettingsView: View {
     @EnvironmentObject var settings: AppSettings
+    @State private var deletionStatus: String?
 
     var body: some View {
         Form {
             Section("Diagnostics") {
                 Toggle("Verbose logging", isOn: $settings.verboseLog)
-                Text("Verbose logs include snippets of what you type. Keep it off unless you're reporting a bug.")
+                Text("Verbose logs can include typed text and context. Keep this off unless you need diagnostics, and review logs before sharing them.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Open Log in Console") {
                         NSWorkspace.shared.open(Log.fileURL)
                     }
-                    Button("Delete Logs") { Log.shared.clear() }
+                    Button("Delete Logs") {
+                        Task {
+                            do {
+                                try await Log.shared.clear()
+                                deletionStatus = "Deleted text logs and legacy screenshot diagnostics."
+                            } catch { deletionStatus = "Could not delete all diagnostics: \(error.localizedDescription)" }
+                        }
+                    }
                 }
+                if let deletionStatus { Text(deletionStatus).font(.caption).foregroundStyle(.secondary) }
             }
             Section {
-                Label("TabType runs 100% locally. Your text never leaves this Mac.",
+                Label("Suggestions run locally. Optional iCloud sync shares encrypted settings and learned writing.",
                       systemImage: "lock.shield")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section {
-                Button("Reset to Defaults", role: .destructive) {
+                Button("Turn Off Verbose Logging") {
                     settings.verboseLog = false
                 }
             }

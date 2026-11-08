@@ -18,7 +18,7 @@ struct OnboardingView: View {
 
             Text("Welcome to TabType").font(.title).bold()
 
-            Text("Free, on-device autocomplete for macOS. As you type, TabType suggests your next words — press Tab to accept. Nothing leaves your Mac.")
+            Text("On-device autocomplete for macOS. TabType suggests your next words — press Tab to accept. Optional encrypted iCloud sync can share saved writing between your Macs.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -36,7 +36,7 @@ struct OnboardingView: View {
             permissionRow(
                 ok: screenOK,
                 title: "Screen Recording (recommended)",
-                detail: "Lets TabType read what's on screen (via on-device OCR) so suggestions match what you're looking at. Fully local.",
+                detail: "Optional screenshot context reads the focused window on this Mac. Chat conversation reading uses Accessibility instead.",
                 buttonTitle: "Grant Screen Recording",
                 action: onGrantScreen)
 

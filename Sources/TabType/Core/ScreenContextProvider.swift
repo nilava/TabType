@@ -75,10 +75,13 @@ final class ScreenContextProvider: ObservableObject {
     /// that text verbatim via accessibility, so re-OCR'ing it only adds noise.
     func refreshIfStale() {
         guard let origin = ContentAccessPolicy.current() else { return }
-        guard hasPermission() else {
+        let activePolicy = AppPolicyStore.policy(forBundleId: origin.bundleId, host: origin.host)
+        guard activePolicy.includesScreenContext,
+              activePolicy.transcriptViaAX || AppSettings.shared.useScreenContext else { return }
+        guard activePolicy.transcriptViaAX || hasPermission() else {
             if !warnedNoPermission {
                 warnedNoPermission = true
-                Log.shared.info("screen memory: no Screen Recording permission — context will stay empty until granted (Settings ▸ Personalization, or System Settings ▸ Privacy & Security ▸ Screen Recording)")
+                Log.shared.info("screen memory: Screen Recording permission is not granted")
             }
             return
         }
@@ -137,20 +140,6 @@ final class ScreenContextProvider: ObservableObject {
         let ocrField = columnFrame
 
         Task.detached(priority: .utility) {
-            // Like Cotypist, every app — chats included — reads what's on screen
-            // above the input field. The accessibility transcript is only the
-            // fallback when that produces nothing.
-            let capture = await ScreenContextProvider.captureFocusedWindow(
-                pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect,
-                windowFrame: windowFrame, fieldFrame: ocrField, origin: origin)
-            if let (app, bid, text) = capture, text.count >= 12 {
-                await MainActor.run {
-                    self.capturing = false
-                    guard ContentAccessPolicy.isCurrent(origin) else { return }
-                    self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
-                }
-                return
-            }
             if await ContentAccessPolicy.isCurrent(origin), let windowBox,
                let transcript = TranscriptExtractor.extract(
                     windowElement: windowBox.element,
@@ -165,6 +154,20 @@ final class ScreenContextProvider: ObservableObject {
                                 host: frontHost, source: "ax transcript")
                 }
                 return
+            }
+            // Conversation policies use AX only; screenshots remain a separate opt-in.
+            if !tryAXTranscript {
+                let capture = await ScreenContextProvider.captureFocusedWindow(
+                    pid: frontPid, fieldText: fieldText, cropMode: cropMode, caretRect: caretRect,
+                    windowFrame: windowFrame, fieldFrame: ocrField, origin: origin)
+                if let (app, bid, text) = capture, text.count >= 12 {
+                    await MainActor.run {
+                        self.capturing = false
+                        guard ContentAccessPolicy.isCurrent(origin) else { return }
+                        self.append(app: app, bundleId: bid, text: text, windowTitle: frontTitle, host: frontHost)
+                    }
+                    return
+                }
             }
             await MainActor.run {
                 self.capturing = false
@@ -271,12 +274,13 @@ final class ScreenContextProvider: ObservableObject {
         let authorization: ContentAccessPolicy.Snapshot?
         if let origin { authorization = origin }
         else { authorization = await ContentAccessPolicy.current() }
-        guard let authorization, pid == authorization.pid,
+        guard let authorization, await screenshotAllowed(for: authorization), pid == authorization.pid,
               await ContentAccessPolicy.isCurrent(authorization) else { return nil }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 true, onScreenWindowsOnly: true)
-            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
+            guard await ContentAccessPolicy.isCurrent(authorization),
+                  await screenshotAllowed(for: authorization) else { return nil }
 
             let candidates = content.windows.filter { w in
                 guard w.isOnScreen, w.frame.width > 120, w.frame.height > 80 else { return false }
@@ -296,10 +300,12 @@ final class ScreenContextProvider: ObservableObject {
             config.height = min(Int(window.frame.height) * scale, 3000)
             config.showsCursor = false
             let filter = SCContentFilter(desktopIndependentWindow: window)
-            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
+            guard await ContentAccessPolicy.isCurrent(authorization),
+                  await screenshotAllowed(for: authorization) else { return nil }
             guard var image = try? await SCScreenshotManager.captureImage(
                 contentFilter: filter, configuration: config) else { return nil }
-            guard await ContentAccessPolicy.isCurrent(authorization) else { return nil }
+            guard await ContentAccessPolicy.isCurrent(authorization),
+                  await screenshotAllowed(for: authorization) else { return nil }
             
             // Caret cropping: keep only the vertical band around the caret's line.
             // Crop the height ONLY — text flows horizontally, so a horizontal pixel
@@ -354,6 +360,11 @@ final class ScreenContextProvider: ObservableObject {
             Log.shared.info("screen capture failed: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    private static func screenshotAllowed(for origin: ContentAccessPolicy.Snapshot) -> Bool {
+        let policy = AppPolicyStore.policy(forBundleId: origin.bundleId, host: origin.host)
+        return AppSettings.shared.useScreenContext && policy.includesScreenContext && !policy.transcriptViaAX
     }
 
     nonisolated private static func ocr(_ image: CGImage, excluding fieldText: String = "",

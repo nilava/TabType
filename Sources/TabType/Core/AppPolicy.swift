@@ -43,8 +43,8 @@ struct AppPolicy {
     /// Code editors: suggest only in short chat inputs (sidebar panels), never the
     /// main editor surface — prose autocomplete there fights code completion.
     var chatPanelsOnly: Bool = false
-    /// Prefer extracting the conversation from the AX tree (chat apps) instead of
-    /// OCR; falls back to OCR when the tree yields too little.
+    /// Read a conversation using AX only. No screenshot fallback: screenshot
+    /// document context is controlled separately by the global opt-in.
     var transcriptViaAX: Bool = false
     /// Overrides the default screen-context character budget for this app (nil = use
     /// the global default). Chat apps get a larger budget so more transcript survives.
@@ -377,14 +377,16 @@ enum AppPolicyStore {
     }
 
     /// Overrides keyed by website host use a `domain:` prefix in the same store.
-    static func domainKey(_ host: String) -> String { "domain:" + host.lowercased() }
+    static func domainKey(_ host: String) -> String {
+        "domain:" + (WebsiteRule.host(from: host) ?? host.lowercased())
+    }
 
     /// Policy for a bundle id AND the current website — the domain override is
     /// applied last (most specific wins). `host` matches exactly or by suffix
     /// ("mail.google.com" matches an override for "google.com").
     static func policy(forBundleId id: String?, host: String?) -> AppPolicy {
         var policy = policy(forBundleId: id)
-        guard let host = host?.lowercased() else { return policy }
+        guard let rawHost = host, let host = WebsiteRule.host(from: rawHost) else { return policy }
         // Built-in web-chat services get the full chat treatment (before user
         // domain overrides, which stay the most specific and win last).
         if chatDomains.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
@@ -392,12 +394,18 @@ enum AppPolicyStore {
             policy.transcriptViaAX = true
             policy.screenContextCap = chatContextCap
         }
-        let match = userOverrides.filter { key, _ in
-            guard key.hasPrefix("domain:") else { return false }
-            let domain = String(key.dropFirst("domain:".count))
-            return host == domain || host.hasSuffix("." + domain)
-        }.max { $0.key.count < $1.key.count }
-        if let (_, o) = match {
+        let matches = userOverrides.compactMap { key, value -> (String, String, AppOverride)? in
+            guard key.hasPrefix("domain:"),
+                  let domain = WebsiteRule.host(from: String(key.dropFirst("domain:".count))),
+                  WebsiteRule.matches(host: host, rule: domain) else { return nil }
+            return (domain, key, value)
+        }.sorted {
+            if $0.0.count != $1.0.count { return $0.0.count > $1.0.count }
+            // Equivalent legacy spellings cannot defeat an explicit denial.
+            if ($0.2.enabled == false) != ($1.2.enabled == false) { return $0.2.enabled == false }
+            return $0.1 < $1.1
+        }
+        if let (_, _, o) = matches.first {
             if let e = o.enabled { policy.isEnabled = e }
             if let m = o.midLineEnabled { policy.allowsMidLine = m }
             if !o.customInstructions.isEmpty {

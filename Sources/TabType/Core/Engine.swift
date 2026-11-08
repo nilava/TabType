@@ -24,6 +24,7 @@ final class Engine {
     private let alternatives = AlternativesController()
     /// The last non-speculative request, kept for word-alternatives regeneration.
     private var lastReq: CompletionRequest?
+    private var lastReqOrigin: ContentAccessPolicy.Snapshot?
 
     /// Fallback context buffer, used when the Accessibility API can't provide the
     /// focused field's text. Rebuilt on focus change.
@@ -176,7 +177,7 @@ final class Engine {
         // The sent message (and often a reply) is about to appear in the transcript —
         // capture it sooner than the next natural refresh would.
         let policy = AppPolicyStore.policy(forBundleId: bundleId)
-        if (settings.useScreenContext || policy.forceScreenContext) && policy.includesScreenContext {
+        if (settings.useScreenContext || policy.transcriptViaAX) && policy.includesScreenContext {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 ScreenContextProvider.shared.refreshIfStale()
             }
@@ -276,6 +277,7 @@ final class Engine {
     /// The keystroke tap only sees keydowns, so without these the ghost text
     /// lingers forever when the user Cmd-Tabs away or clicks elsewhere.
     private func installDismissObservers() {
+        WritingStore.shared.onErase = { [weak self] in self?.discardSensitiveState() }
         contentSettingsObserver = settings.objectWillChange.sink { [weak self] in
             // Published sends before the new value is installed. Revoke now;
             // subsequent work reads the new setting on the next main-loop turn.
@@ -306,10 +308,9 @@ final class Engine {
                 self.lastAXInput = nil
                 // Track the new app's focused element via AX notifications so we
                 // notice field changes INSTANTLY, not on the next keystroke.
+                self.discardSensitiveState()
                 if let newPid { self.installFocusObserver(pid: newPid) }
-                guard self.currentSuggestion != nil || self.inlineCommand.isActive else { return }
-                self.clearSuggestion()
-                self.lastPredictedPrompt = ""
+                self.observeFocusedField()
             }
         }
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
@@ -410,20 +411,18 @@ final class Engine {
                 self.observedFocus = now
                 ContentAccessPolicy.invalidate()
                 self.lockedContext = nil
-                self.observeFocusedField()
                 if self.currentSuggestion != nil { self.clearSuggestion() }
                 if self.inlineCommand.isActive { self.inlineCommand.cancel() }
                 self.dropPendingEdits()
                 self.recordFieldWriting()
-                self.lastAXInput = nil
-                self.buffer = ""
-                self.lastPredictedPrompt = ""
+                self.discardSensitiveState()
+                self.observeFocusedField()
                 self.updateAccessoryButton()
                 // Host-aware: a browser tab on a chat site gets the chat treatment.
                 let policy = AppPolicyStore.policy(
                     forBundleId: AccessibilityBridge.frontmostBundleId(),
                     host: AccessibilityBridge.frontmostURLHost())
-                if (self.settings.useScreenContext || policy.forceScreenContext) && policy.includesScreenContext {
+                if (self.settings.useScreenContext || policy.transcriptViaAX) && policy.includesScreenContext {
                     ScreenContextProvider.shared.refreshIfStale()
                 }
                 self.schedulePrewarm(policy: policy)
@@ -454,7 +453,7 @@ final class Engine {
             let bid = AccessibilityBridge.frontmostBundleId()
             let policy = AppPolicyStore.policy(forBundleId: bid, host: origin.host)
             let screenCap = policy.screenContextCap ?? AppPolicyStore.defaultContextCap
-            let screenEnabled = (self.settings.useScreenContext || policy.forceScreenContext)
+            let screenEnabled = (self.settings.useScreenContext || policy.transcriptViaAX)
                 && policy.includesScreenContext
             let screen = screenEnabled
                 ? ScreenContextProvider.shared.contextText(for: bid, cap: screenCap) : ""
@@ -496,7 +495,7 @@ final class Engine {
         let caretRect = AccessibilityBridge.focusedElement()
             .flatMap { AccessibilityBridge.caretRect(of: $0) }
         var initial: [String] = []
-        if let suggestion = currentSuggestion,
+        if lastReqOrigin.map(ContentAccessPolicy.isCurrent) == true, let suggestion = currentSuggestion,
            let first = suggestion.split(whereSeparator: { $0 == " " || $0 == "\n" }).first {
             initial.append(String(first))
         }
@@ -505,7 +504,7 @@ final class Engine {
             initial += result.alternatives.map { $0.text.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty && !initial.contains($0) }
         }
-        guard !initial.isEmpty || lastReq != nil else { return }
+        guard !initial.isEmpty || lastReqOrigin.map(ContentAccessPolicy.isCurrent) == true else { return }
         alternatives.show(candidates: initial.isEmpty ? ["…"] : initial, caretRect: caretRect)
         let gen = alternatives.currentGeneration
 
@@ -532,7 +531,7 @@ final class Engine {
     private func showSynonyms(for word: String, before: String, after: String, llama: LlamaEngine,
                               caretRect: CGRect?) {
         guard let origin = ContentAccessPolicy.current() else { return }
-        let base = lastReq
+        let base = lastReqOrigin.map(ContentAccessPolicy.isCurrent) == true ? lastReq : nil
         Task { [weak self] in
             let words = await llama.synonyms(for: word, before: before, after: after, base: base)
             guard let self, ContentAccessPolicy.isCurrent(origin) else { return }
@@ -926,7 +925,7 @@ final class Engine {
             guard let self else { return }
             let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId(),
                                                host: AccessibilityBridge.frontmostURLHost())
-            if (self.settings.useScreenContext || policy.forceScreenContext) && policy.includesScreenContext
+            if (self.settings.useScreenContext || policy.transcriptViaAX) && policy.includesScreenContext
                 && !PowerMonitor.shared.shouldPauseCapture {
                 ScreenContextProvider.shared.refreshIfStale()
             }
@@ -947,7 +946,7 @@ final class Engine {
             // waiting for the next runPrediction() cycle — otherwise the very first
             // suggestion in a freshly-focused window has no completed capture yet.
             let policy = AppPolicyStore.policy(forBundleId: AccessibilityBridge.frontmostBundleId())
-            if (settings.useScreenContext || policy.forceScreenContext) && policy.includesScreenContext {
+            if (settings.useScreenContext || policy.transcriptViaAX) && policy.includesScreenContext {
                 ScreenContextProvider.shared.refreshIfStale()
             }
         }
@@ -1447,9 +1446,9 @@ final class Engine {
         }
 
         // Screen memory (throttled, off the typing path), unless this app opts out or
-        // we're conserving battery. Chat/messaging apps force this on regardless of
-        // the global toggle — reading recent conversation is the whole point there.
-        let screenContextEnabled = (settings.useScreenContext || policy.forceScreenContext)
+        // we're conserving battery. Chat conversation policies use Accessibility;
+        // screenshot context still requires its separate global opt-in.
+        let screenContextEnabled = (settings.useScreenContext || policy.transcriptViaAX)
             && policy.includesScreenContext
         if screenContextEnabled && !PowerMonitor.shared.shouldPauseCapture {
             ScreenContextProvider.shared.refreshIfStale()
@@ -1618,6 +1617,7 @@ final class Engine {
         req.fieldPlaceholder = ctx.placeholder
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
         lastReq = req   // word-alternatives regeneration basis
+        lastReqOrigin = origin
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
         let startedAt = DispatchTime.now()
 
@@ -2073,10 +2073,14 @@ final class Engine {
         guard let origin = ContentAccessPolicy.current() else { discardSensitiveState(); return false }
         // Inline command (emoji/macro) takes priority over LLM suggestions.
         if inlineCommand.isActive {
-            if let (deleteCount, insert) = inlineCommand.accept() {
+            if let (deleteCount, insert, typed) = inlineCommand.accept() {
                 buffer = String(buffer.dropLast(deleteCount)) + insert
                 DispatchQueue.main.async {
-                    guard ContentAccessPolicy.isCurrent(origin) else { self.discardSensitiveState(); return }
+                    guard ContentAccessPolicy.isCurrent(origin),
+                          let field = AccessibilityBridge.focusedElement(),
+                          AccessibilityBridge.hasCollapsedCaret(of: field),
+                          AccessibilityBridge.textBeforeCaret(of: field, maxChars: 60)?.hasSuffix(typed) == true
+                    else { self.discardSensitiveState(); return }
                     self.dropPendingEdits()   // text changed other than by typing
                     TextInserter.backspace(count: deleteCount)
                     TextInserter.insert(insert, strategy: .keystroke)
@@ -2087,6 +2091,9 @@ final class Engine {
             return false
         }
 
+        guard lastReqOrigin.map(ContentAccessPolicy.isCurrent) == true else {
+            discardSensitiveState(); return false
+        }
         let options = SuggestionSession.AcceptOptions(
             includeTrailingPunctuation: settings.includeTrailingPunctuation,
             includeTrailingSpace: settings.includeTrailingSpace)
@@ -2226,11 +2233,13 @@ final class Engine {
         buffer = ""
         lastAXInput = nil
         lastReq = nil
+        lastReqOrigin = nil
         lookahead = nil
         lockedContext = nil
         recentInputs.removeAll()
         acceptedInCurrentText = false
         inlineCommand.cancel()
+        router.current.clearRecent()
         ScreenContextProvider.shared.discardHistory()
         clearSuggestion()
     }

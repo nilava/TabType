@@ -13,6 +13,7 @@ enum ContentAccessPolicy {
         let host: String?
         let element: AXUIElement
         let windowFrame: CGRect?
+        let windowTitle: String?
     }
 
     private static var generation: UInt64 = 0
@@ -26,7 +27,7 @@ enum ContentAccessPolicy {
     static func invalidate() { generation &+= 1 }
 
     nonisolated static func canonicalHost(_ host: String) -> String {
-        host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        WebsiteRule.host(from: host) ?? host.lowercased()
     }
 
     /// Ambiguous or missing window identity must never select a different window.
@@ -45,11 +46,11 @@ enum ContentAccessPolicy {
                        host: String?, disabledDomains: Set<String>,
                        isBrowser: Bool, secure: Bool, credential: Bool) -> Bool {
         guard enabled, appEnabled, domainEnabled, !secure, !credential else { return false }
-        guard let host = host.map(canonicalHost) else { return !isBrowser || disabledDomains.isEmpty }
-        return !disabledDomains.contains { domain in
-            let domain = canonicalHost(domain)
-            return host == domain || host.hasSuffix("." + domain)
-        }
+        guard let host else { return !isBrowser || disabledDomains.isEmpty }
+        guard WebsiteRule.host(from: host) != nil else { return false }
+        // An unrecognized saved exclusion must not silently permit the browser.
+        guard disabledDomains.allSatisfy({ WebsiteRule.host(from: $0) != nil }) else { return false }
+        return !disabledDomains.contains { WebsiteRule.matches(host: host, rule: $0) }
     }
 
     static func current() -> Snapshot? {
@@ -70,7 +71,8 @@ enum ContentAccessPolicy {
             return String(key.dropFirst("domain:".count))
         }
         // With no resolved URL, neither list of excluded sites can be enforced.
-        let exclusions = host == nil ? settings.disabledDomains.union(deniedOverrides) : settings.disabledDomains
+        let invalidOverrides = deniedOverrides.filter { WebsiteRule.host(from: $0) == nil }
+        let exclusions = settings.disabledDomains.union(host == nil ? deniedOverrides : invalidOverrides)
         guard allows(enabled: settings.isEnabled, appEnabled: true, domainEnabled: policy.isEnabled,
                      host: host, disabledDomains: exclusions,
                      isBrowser: browsers.contains(bundleId),
@@ -80,12 +82,14 @@ enum ContentAccessPolicy {
         guard AXUIElementGetPid(element, &pid) == .success, pid == app.processIdentifier else { return nil }
         authorized = true
         return Snapshot(generation: generation, pid: pid, bundleId: bundleId, host: host,
-                        element: element, windowFrame: ContextReader.windowRect(of: element))
+                        element: element, windowFrame: ContextReader.windowRect(of: element),
+                        windowTitle: ScreenContextProvider.stableTitle(AccessibilityBridge.focusedWindowTitle()))
     }
 
     static func isCurrent(_ snapshot: Snapshot) -> Bool {
         guard snapshot.generation == generation, let now = current() else { return false }
         return snapshot.pid == now.pid && snapshot.host == now.host
             && CFEqual(snapshot.element, now.element) && snapshot.windowFrame == now.windowFrame
+            && snapshot.windowTitle == now.windowTitle
     }
 }
