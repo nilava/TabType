@@ -51,7 +51,7 @@ public final class SuffixIndex: @unchecked Sendable {
     }
 
     /// The most common continuation after the longest matching tail of `typed`
-    /// (tails start at a word boundary and are at least `minimumMatch` characters).
+    /// (tails start at a word boundary and are at least `minimumMatch` UTF-8 bytes).
     public func continuation(after typed: String, minimumMatch: Int = 10, maxWords: Int = 4) -> RetrievalHint? {
         guard !suffixes.isEmpty else { return nil }
         let query = Self.normalize(typed).map(Self.asciiLower)
@@ -64,19 +64,32 @@ public final class SuffixIndex: @unchecked Sendable {
             if query.count - i >= 60 { break }
         }
         for start in starts.reversed() {   // longest tail first
-            let pattern = Array(query[start...].prefix(Self.compareLength))
+            // The match must end exactly at the caret. Truncating the right side
+            // would return part of the already typed tail (or half a UTF-8 scalar).
+            let pattern = Array(query[start...])
+            guard pattern.count <= Self.compareLength else { continue }
             let range = matches(pattern)
             guard !range.isEmpty else { continue }
-            var tally: [String: (count: Int, text: String)] = [:]
+            var firstWords: [String: Int] = [:]
+            var phrases: [String: (count: Int, text: String)] = [:]
             for i in range {
                 let end = Int(suffixes[i]) + pattern.count
                 guard let cont = continuationText(from: end, maxWords: maxWords), !cont.isEmpty else { continue }
-                let key = firstWordKey(cont)
-                let entry = tally[key] ?? (0, cont)
-                tally[key] = (entry.count + 1, entry.text)
+                firstWords[firstWordKey(cont), default: 0] += 1
+                let key = cont.lowercased()
+                let entry = phrases[key] ?? (0, cont)
+                phrases[key] = (entry.count + 1, min(entry.text, cont))
             }
-            if let best = tally.values.max(by: { $0.count < $1.count }) {
-                return RetrievalHint(text: best.text, matchedCharacters: pattern.count, support: best.count)
+            // Preserve the most common next word, then choose its most frequent
+            // full continuation instead of the first suffix-array occurrence.
+            // Lexical ties are stable across process hash seeds and input order.
+            if let first = firstWords.max(by: {
+                $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value
+            }), let best = phrases.filter({ firstWordKey($0.value.text) == first.key }).max(by: {
+                $0.value.count == $1.value.count ? $0.key > $1.key : $0.value.count < $1.value.count
+            }) {
+                return RetrievalHint(text: best.value.text,
+                    matchedCharacters: String(decoding: pattern, as: UTF8.self).count, support: first.value)
             }
         }
         return nil

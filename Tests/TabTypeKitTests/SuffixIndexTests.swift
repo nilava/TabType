@@ -49,6 +49,32 @@ final class SuffixIndexTests: XCTestCase {
         XCTAssertNil(index.continuation(after: "first note ends here "), "nothing follows in that document")
     }
 
+    func testChoosesTheFrequentPhraseWithinTheWinningFirstWord() throws {
+        let index = SuffixIndex(documents: [
+            "We can meet at eight tomorrow.",
+            "We can meet at seven tomorrow.",
+            "We can meet at seven tomorrow.",
+        ])
+        let hint = try XCTUnwrap(index.continuation(after: "We can meet "))
+        XCTAssertEqual(hint.text, "at seven tomorrow.")
+        XCTAssertEqual(hint.support, 3, "First-word support still counts all three occurrences of at")
+    }
+
+    func testLongTailDoesNotReturnPartOfTheAlreadyTypedText() throws {
+        let prefix = String(repeating: "x", count: 20) + " " + String(repeating: "y", count: 50) + " "
+        let index = SuffixIndex(documents: [prefix + "tomorrow morning"])
+        let hint = try XCTUnwrap(index.continuation(after: prefix))
+        XCTAssertEqual(hint.text, "tomorrow morning")
+    }
+
+    func testLongUnicodeTailNeverStartsInsideAUTF8Character() throws {
+        let prefix = String(repeating: "é", count: 20) + " " + String(repeating: "界", count: 18) + " "
+        let index = SuffixIndex(documents: [prefix + "tomorrow morning"])
+        let hint = try XCTUnwrap(index.continuation(after: prefix))
+        XCTAssertEqual(hint.text, "tomorrow morning")
+        XCTAssertFalse(hint.text.contains("\u{FFFD}"))
+    }
+
     func testBuildsLargeIndexQuickly() {
         let docs = (0..<4000).map { "Message number \($0) about the quarterly planning and the budget review \($0 % 17)." }
         let start = Date()
