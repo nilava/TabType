@@ -31,9 +31,12 @@ eval)
 app)
     build_scheme
 
-    APP="$ROOT/dist/TabType.app"
+    # Assemble and sign outside Finder-managed project folders. Their metadata
+    # can be recreated while signing even after an explicit cleanup.
+    STAGING="$(mktemp -d "${TMPDIR:-/tmp}/tabtype-build.XXXXXX")"
+    trap 'rm -rf "$STAGING"' EXIT
+    APP="$STAGING/TabType.app"
     echo "Bundling $APP …"
-    rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
     # Executable
@@ -70,6 +73,9 @@ app)
     # Writing zero clears those flags instead of letting them reappear at verify.
     find "$APP" -type d \( -name '*.app' -o -name '*.bundle' -o -name '*.framework' \) \
         -exec xattr -wx com.apple.FinderInfo 0000000000000000000000000000000000000000000000000000000000000000 {} +
+    # Zeroing clears backing flags but creates an attribute that codesign also
+    # rejects. Remove that now-empty metadata before signing.
+    xattr -dr com.apple.FinderInfo "$APP" 2>/dev/null || true
 
     # Code signature. Prefer the stable self-signed "TabType Dev" identity (set up via
     # Scripts/setup-signing.sh) so macOS keeps Accessibility/Screen Recording grants
@@ -89,6 +95,13 @@ app)
             "$APP" 2>/dev/null || codesign --force --deep --sign - "$APP"
     fi
 
+    codesign --verify --deep --strict "$APP"
+    mkdir -p "$ROOT/dist"
+    # Keep a transport artifact whose signature cannot acquire Finder attributes.
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "$ROOT/dist/TabType.zip"
+    rm -rf "$ROOT/dist/TabType.app"
+    ditto "$APP" "$ROOT/dist/TabType.app"
+    APP="$ROOT/dist/TabType.app"
     codesign --verify --deep --strict "$APP"
     echo "Done: $APP"
     echo "Run:  open \"$APP\"   (or: \"$APP/Contents/MacOS/TabType\" to see logs)"
