@@ -3,6 +3,22 @@ import XCTest
 
 final class TranscriptNormalizerTests: XCTestCase {
 
+    func testPreservesMeetingTimesAndRelativeTimingInsideMessages() {
+        let lines = [
+            "Avery: Please meet me at 6:30 PM by the library.",
+            "The train leaves Today at 2:40 PM from platform four.",
+            "I sent the revised link 2 minutes ago, after the meeting.",
+            "Yesterday at 9:15 AM was the start, not the deadline."
+        ]
+        for line in lines { XCTAssertEqual(TranscriptNormalizer.normalize(line), line) }
+    }
+
+    func testSpeakerLabelProtectsMessagesThatResembleStatusText() {
+        for line in ["Avery: Morgan is typing…", "Morgan: Delivered", "Avery: Active now"] {
+            XCTAssertEqual(TranscriptNormalizer.normalize(line), line)
+        }
+    }
+
     func testStripsNoiseLinesKeepsMessages() {
         let raw = """
         Nilava
@@ -23,12 +39,10 @@ final class TranscriptNormalizerTests: XCTestCase {
         XCTAssertFalse(out.contains("Seen by"))
     }
 
-    func testStripsInlineTimestampsAndEdited() {
-        let out = TranscriptNormalizer.normalize("sounds good (edited) Today at 9:41 AM let's ship it")
-        XCTAssertFalse(out.contains("(edited)"))
-        XCTAssertFalse(out.contains("9:41"))
-        XCTAssertTrue(out.contains("sounds good"))
-        XCTAssertTrue(out.contains("let's ship it"))
+    func testPreservesAmbiguousInlineMetadataButDropsStandaloneMarkers() {
+        let text = "sounds good (edited) Today at 9:41 AM let's ship it"
+        XCTAssertEqual(TranscriptNormalizer.normalize(text), text)
+        XCTAssertEqual(TranscriptNormalizer.normalize("2 minutes ago\n(edited)\n" + text), text)
     }
 
     func testJitterIsNotMeaningfulChange() {
