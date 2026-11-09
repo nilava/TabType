@@ -1330,25 +1330,7 @@ final class Engine {
     /// Gate junk predictions: need at least a couple of meaningful characters and a
     /// sensible boundary (don't fire mid-URL or right after a bare `/@`).
     nonisolated static func shouldPredict(_ input: String) -> Bool {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else { return false }
-        
-        // Wait for at least 1 word on the current line before predicting (or a very long first word).
-        let currentLine = input.split(separator: "\n", omittingEmptySubsequences: false).last ?? ""
-        let lineTrimmed = currentLine.trimmingCharacters(in: .whitespaces)
-        guard lineTrimmed.contains(where: { $0.isWhitespace }) || lineTrimmed.count >= 3 else { return false }
-        if let last = input.last, "/@".contains(last) { return false }
-        if let lastWord = input.split(whereSeparator: { $0 == " " || $0 == "\n" }).last {
-            if lastWord.contains("://") { return false }
-            // Typing an email address (content-based backstop for credential
-            // fields the AX label check can't identify): "x@y" mid-word. A chat
-            // @mention has nothing before the "@" and stays allowed.
-            if let at = lastWord.firstIndex(of: "@"), at != lastWord.startIndex,
-               lastWord.index(after: at) != lastWord.endIndex {
-                return false
-            }
-        }
-        return true
+        PredictionEligibility.shouldPredict(input)
     }
 
     /// True once the field's AX text reflects the latest keystroke (or AX text isn't
