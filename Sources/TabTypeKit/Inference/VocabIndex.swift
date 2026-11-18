@@ -16,6 +16,8 @@ public final class VocabIndex: @unchecked Sendable {
     public let endOfGeneration: [Bool]
     /// Generable token ids grouped by their first byte.
     private let byFirstByte: [[TokenID]]
+    /// Generable token id by its exact bytes (first id wins on duplicates).
+    private let byPiece: [[UInt8]: TokenID]
 
     public init(pieces: [[UInt8]], blocked: [Bool], endOfGeneration: [Bool]) {
         precondition(pieces.count == blocked.count && pieces.count == endOfGeneration.count)
@@ -28,6 +30,20 @@ public final class VocabIndex: @unchecked Sendable {
             if let first = piece.first { buckets[Int(first)].append(TokenID(id)) }
         }
         self.byFirstByte = buckets
+        var byPiece: [[UInt8]: TokenID] = [:]
+        for (id, piece) in pieces.enumerated() where !blocked[id] && byPiece[piece] == nil { byPiece[piece] = TokenID(id) }
+        self.byPiece = byPiece
+    }
+
+    /// The longest generable token that is a prefix of `bytes` and longer than
+    /// `minimumLength` bytes — a few dictionary lookups, no vocabulary scan.
+    public func longestPrefixToken(of bytes: [UInt8], longerThan minimumLength: Int) -> TokenID? {
+        var n = bytes.count
+        while n > minimumLength {
+            if let id = byPiece[Array(bytes[..<n])] { return id }
+            n -= 1
+        }
+        return nil
     }
 
     /// Tokens consistent with having to produce `required` next: the token's bytes

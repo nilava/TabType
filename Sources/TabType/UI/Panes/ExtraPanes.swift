@@ -264,12 +264,13 @@ struct PersonalizationPane: View {
                 Text("TabType keeps the messages you send and the text you write (passwords, keys and card numbers are removed first) so suggestions can reuse your own phrasing — your sign-offs, names and recurring sentences. Everything is encrypted and stays on your Mac. You can turn this on or off per app in Settings ▸ Apps.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Personalization strength", selection: $settings.personalizationStrength) {
+                    Text("Off").tag("off")
                     Text("Gentle").tag("gentle")
                     Text("Balanced").tag("balanced")
                     Text("Strong").tag("strong")
                 }
                 .pickerStyle(.segmented)
-                Text("How strongly your own past phrasing steers suggestions.")
+                Text("How strongly your own past phrasing, words and per-app style steer suggestions. Off: your writing is kept but not used.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Record text even when you accept no suggestion", isOn: $settings.recordWithoutAccepts)
                 Text("Off: TabType only learns from messages where you used at least one suggestion.")

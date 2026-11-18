@@ -16,6 +16,10 @@ final class WritingStore: ObservableObject {
         var bundleId: String
         var text: String
         var updated: Date
+        /// Written in a session where the author accepted at least one suggestion
+        /// (nil: stored before this was tracked). Only these feed the vocabulary
+        /// bias and style exemplars — high-signal writing, not throwaway typing.
+        var accepted: Bool?
     }
 
     enum Kind { case message, field }
@@ -43,22 +47,30 @@ final class WritingStore: ObservableObject {
     }
 
     var texts: [String] { documents.map(\.text) }
+    /// Writing from sessions with an accepted suggestion, oldest first.
+    var acceptedDocuments: [Document] { Self.highSignal(documents) }
 
-    func record(_ text: String, bundleId: String, fieldKey: String?, kind: Kind) {
+    /// Accepted-only learning: writing from sessions with no accepted suggestion
+    /// (or stored before acceptance was tracked) is left out.
+    static func highSignal(_ docs: [Document]) -> [Document] { docs.filter { $0.accepted == true } }
+
+    func record(_ text: String, bundleId: String, fieldKey: String?, kind: Kind, accepted: Bool = false) {
         let clean = SecretSanitizer.sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard clean.count >= minimumLength else { return }
         switch kind {
         case .message:
             guard documents.last?.text != clean else { return }
-            documents.append(Document(key: "msg:\(UUID().uuidString)", bundleId: bundleId, text: clean, updated: Date()))
+            documents.append(Document(key: "msg:\(UUID().uuidString)", bundleId: bundleId, text: clean, updated: Date(),
+                                      accepted: accepted))
         case .field:
             let key = "field:\(bundleId)|\(fieldKey ?? "")"
             if let i = documents.firstIndex(where: { $0.key == key }) {
                 guard documents[i].text != clean else { return }
                 documents[i].text = clean
                 documents[i].updated = Date()
+                documents[i].accepted = documents[i].accepted == true || accepted
             } else {
-                documents.append(Document(key: key, bundleId: bundleId, text: clean, updated: Date()))
+                documents.append(Document(key: key, bundleId: bundleId, text: clean, updated: Date(), accepted: accepted))
             }
         }
         trim()
@@ -182,6 +194,10 @@ final class WritingStore: ObservableObject {
 final class PersonalIndex {
     static let shared = PersonalIndex()
     private(set) var index: SuffixIndex?
+    /// Word/phrase counts from accepted writing only (logit bias).
+    private(set) var vocabulary: PersonalVocabulary?
+    /// Accepted writing as (app, text), oldest first (style exemplars).
+    private var exemplarSource: [(app: String, text: String)] = []
     private var rebuild: Task<Void, Never>?
 
     func start() {
@@ -191,15 +207,24 @@ final class PersonalIndex {
 
     func hint(after typed: String) -> RetrievalHint? { index?.continuation(after: typed) }
 
+    func exemplars(for bundleId: String) -> [String] {
+        StyleExemplars.pick(from: exemplarSource, app: bundleId)
+    }
+
     private func scheduleRebuild(delay: TimeInterval = 5) {
         rebuild?.cancel()
         let texts = WritingStore.shared.texts
+        let accepted = WritingStore.shared.acceptedDocuments.map { (app: $0.bundleId, text: $0.text) }
         rebuild = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             guard !Task.isCancelled else { return }
-            let built = await Task.detached(priority: .utility) { SuffixIndex(documents: texts) }.value
+            let (built, vocabulary) = await Task.detached(priority: .utility) {
+                (SuffixIndex(documents: texts), PersonalVocabulary(documents: accepted.map(\.text)))
+            }.value
             guard !Task.isCancelled else { return }
             self?.index = built.isEmpty ? nil : built
+            self?.vocabulary = vocabulary.isEmpty ? nil : vocabulary
+            self?.exemplarSource = accepted
             Log.shared.debug("personal index: \(texts.count) documents, \(built.byteCount) bytes")
         }
     }

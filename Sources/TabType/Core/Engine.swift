@@ -142,7 +142,8 @@ final class Engine {
         defer { acceptedInCurrentText = false }
         guard let ax = lastAXInput, learnsFromWriting(ax.bundleId) else { return }
         guard settings.recordWithoutAccepts || acceptedInCurrentText else { return }
-        WritingStore.shared.record(ax.text, bundleId: ax.bundleId, fieldKey: ax.windowTitle, kind: .field)
+        WritingStore.shared.record(ax.text, bundleId: ax.bundleId, fieldKey: ax.windowTitle, kind: .field,
+                                   accepted: acceptedInCurrentText)
     }
 
     /// A suggestion was accepted in the text being written (see
@@ -163,7 +164,8 @@ final class Engine {
         lastAXInput = nil
         guard text.count >= 4 else { return }
         if learnsFromWriting(bundleId), settings.recordWithoutAccepts || acceptedInCurrentText {
-            WritingStore.shared.record(text, bundleId: bundleId, fieldKey: nil, kind: .message)
+            WritingStore.shared.record(text, bundleId: bundleId, fieldKey: nil, kind: .message,
+                                       accepted: acceptedInCurrentText)
         }
         acceptedInCurrentText = false
         var list = recentInputs[bundleId] ?? []
@@ -1572,6 +1574,7 @@ final class Engine {
         req.windowTitle = ctx.windowTitle
         req.fieldPlaceholder = ctx.placeholder
         req.learnsFromWriting = bundleId.map(learnsFromWriting) ?? false
+        req.bundleId = bundleId ?? ""
         lastReq = req   // word-alternatives regeneration basis
         Log.shared.debug("predict app=\(bundleId ?? "?") engine=\(engine.displayName) focused=\(ctx.focused != nil) screenCtx=\(screenContext.count) inputTail=\"\(String(ctx.input.suffix(40)))\"")
         let startedAt = DispatchTime.now()

@@ -86,14 +86,24 @@ final class DecoderBackend: CompletionBackend {
     private let noisy: Bool
     private let conversations: Bool
     private var indexes: [Int: SuffixIndex] = [:]
+    /// Vocabulary logit-bias strength (0 = off) and per-app exemplars, both from
+    /// the same leave-one-out history.
+    private let biasStrength: Double
+    private let exemplars: Bool
+    private var vocabularies: [Int: PersonalVocabulary] = [:]
     private(set) var hintsOffered = 0
     private(set) var hintsUsed = 0
+    private(set) var biasedCases = 0
+    private(set) var personalWordChosen = 0
+    private(set) var personalWordWon = 0
     private(set) var lastConfidence: Double?
 
     init(runtime: LlamaRuntime, options: DecoderOptions, threshold: Double,
          template: ModelTemplate?, templateName: String, authorName: String?, situationHeader: Bool = false,
          noisy: Bool = false, sections: Bool = false, conversations: Bool = true,
-         history: [CorpusEntry]? = nil, hintFactor: Double = 0.5) {
+         history: [CorpusEntry]? = nil, hintFactor: Double = 0.5, biasStrength: Double = 0, exemplars: Bool = false) {
+        self.biasStrength = biasStrength
+        self.exemplars = exemplars
         self.noisy = noisy
         self.conversations = conversations
         self.history = history
@@ -106,16 +116,26 @@ final class DecoderBackend: CompletionBackend {
                                                         sections: sections, tokenCount: sections ? counter : nil) }
         self.authorName = authorName
         name = "llama-decoder/\(templateName)" + (history == nil ? "" : "+history")
+            + (biasStrength > 0 ? "+bias\(biasStrength)" : "") + (exemplars ? "+exemplars" : "")
         model = URL(fileURLWithPath: runtime.modelPath).deletingPathExtension().lastPathComponent
     }
 
     func complete(_ evalCase: EvalCase) async throws -> String? {
-        let text = assembler?.assemble(evalCase.promptContext(authorName: authorName, noisy: noisy,
-                                                               conversations: conversations))
-            ?? EvalPrompt.document(for: evalCase)
+        let entry = Int(evalCase.id.split(separator: "-").first ?? "")
+        let others = history.flatMap { h in entry.map { e in h.enumerated().filter { $0.offset != e }.map(\.element) } }
+        var context = evalCase.promptContext(authorName: authorName, noisy: noisy, conversations: conversations)
+        if exemplars, let others {
+            context.styleExemplars = StyleExemplars.pick(from: others.map { ($0.app ?? "", $0.text) }, app: evalCase.app ?? "")
+        }
+        let text = assembler?.assemble(context) ?? EvalPrompt.document(for: evalCase)
         var options = self.options
         var support = 0
-        if let history, let entry = Int(evalCase.id.split(separator: "-").first ?? "") {
+        if biasStrength > 0, let others, let entry {
+            let vocabulary = vocabularies[entry] ?? PersonalVocabulary(documents: others.map(\.text))
+            vocabularies[entry] = vocabulary
+            options.biasTargets = vocabulary.biasTargets(after: evalCase.prefix, strength: biasStrength)
+        }
+        if let history, let entry {
             let index = indexes[entry] ?? SuffixIndex(documents: history.enumerated()
                 .filter { $0.offset != entry }.map(\.element.text))
             indexes[entry] = index
@@ -127,6 +147,9 @@ final class DecoderBackend: CompletionBackend {
         }
         let result = try CompletionDecoder.complete(text, model: runtime, options: options)
         if result?.followsHint == true { hintsUsed += 1 }
+        if !options.biasTargets.isEmpty { biasedCases += 1 }
+        if result?.followsPersonalWord == true { personalWordChosen += 1 }
+        if result?.personalWordWon == true { personalWordWon += 1 }
         lastConfidence = result?.confidence ?? 0
         let gate = (result?.followsHint == true && support >= 2) ? threshold * hintFactor : threshold
         guard let result, result.confidence >= gate else { return nil }

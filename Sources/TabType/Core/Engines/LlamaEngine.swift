@@ -29,7 +29,14 @@ final class LlamaEngine {
 
     func complete(_ request: CompletionRequest) async -> String? {
         guard let template = models.template, var options = models.decoderOptions else { return nil }
-        let text = PromptAssembler(template: template, situationHeader: true).assemble(context(for: request))
+        // Personalization strength "off" skips every personal step (no lookups).
+        let learns = AppSettings.shared.collectTypingHistory || request.learnsFromWriting
+        let personal = learns ? AppSettings.shared.personalization : nil
+        var promptContext = context(for: request)
+        if personal != nil, !request.bundleId.isEmpty {
+            promptContext.styleExemplars = PersonalIndex.shared.exemplars(for: request.bundleId)
+        }
+        let text = PromptAssembler(template: template, situationHeader: true).assemble(promptContext)
 
         // Warm-ups only prefill the prompt into the cache.
         if request.warmUpOnly {
@@ -40,13 +47,15 @@ final class LlamaEngine {
         options.maxWords = max(1, request.maxWords)
         // What the author wrote after these words before, if they opted in.
         var hintSupport = 0
-        if AppSettings.shared.collectTypingHistory || request.learnsFromWriting,
-           let hint = PersonalIndex.shared.hint(after: request.beforeCursor) {
+        if let personal, let hint = PersonalIndex.shared.hint(after: request.beforeCursor) {
             options.hint = Array(hint.text.utf8)
-            options.hintBonus = AppSettings.shared.personalization.bonus
+            options.hintBonus = personal.bonus
             hintSupport = hint.support
         }
-        let cacheKey = "\(models.loadedID ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(text)"
+        if let personal, let vocabulary = PersonalIndex.shared.vocabulary {
+            options.biasTargets = vocabulary.biasTargets(after: request.beforeCursor, strength: personal.logitBias)
+        }
+        let cacheKey = "\(models.loadedID ?? "")|\(options.maxWords)|\(options.showThreshold)|\(String(decoding: options.hint, as: UTF8.self))|\(personal?.logitBias ?? 0)|\(text)"
         let start = Date()
         let result: TabTypeKit.CompletionResult
         let cached: Bool
@@ -75,7 +84,7 @@ final class LlamaEngine {
         var threshold = options.showThreshold * (midWord ? 0.4 : 0.75)
         // A phrase the author has used repeatedly earns a lower bar still (eval:
         // +13% accepted characters on a repeat-writer set).
-        if result.followsHint && hintSupport >= 2 { threshold *= AppSettings.shared.personalization.repeatedPhraseBar }
+        if let personal, result.followsHint && hintSupport >= 2 { threshold *= personal.repeatedPhraseBar }
         // Lookahead (speculative) results stay out of the statistics.
         let quiet = request.speculative
         guard result.confidence >= threshold else {

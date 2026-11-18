@@ -18,11 +18,14 @@ public struct PromptContext: Sendable, Equatable {
     /// `screenText` is a conversation with `Name: message` lines.
     public var isConversation: Bool
     public var clipboard: String?
+    /// Short samples of what the author wrote before in this app (see
+    /// `StyleExemplars`), so the continuation matches their register here.
+    public var styleExemplars: [String]
 
     public init(typedText: String, appName: String? = nil, windowTitle: String? = nil,
                 fieldPlaceholder: String? = nil, authorName: String? = nil,
                 customInstructions: String? = nil, screenText: String? = nil,
-                isConversation: Bool = false, clipboard: String? = nil) {
+                isConversation: Bool = false, clipboard: String? = nil, styleExemplars: [String] = []) {
         self.typedText = typedText
         self.appName = appName
         self.windowTitle = windowTitle
@@ -32,6 +35,7 @@ public struct PromptContext: Sendable, Equatable {
         self.screenText = screenText
         self.isConversation = isConversation
         self.clipboard = clipboard
+        self.styleExemplars = styleExemplars
     }
 }
 
@@ -50,6 +54,8 @@ public struct PromptBudgets: Sendable, Equatable {
     public var screenTokens = 384
     public var clipboardTokens = 96
     public var notesTokens = 128
+    /// All style exemplars together (both layouts).
+    public var exemplarTokens = 80
     public init() {}
 }
 
@@ -98,6 +104,8 @@ public struct PromptAssembler: Sendable {
         if let notes = clean(c.customInstructions, limit: budgets.customInstructions) {
             parts.append("Notes about the writer: \(notes)")
         }
+        let examples = exemplars(c)
+        if !examples.isEmpty { parts.append("Earlier, the writer wrote here:\n" + examples.joined(separator: "\n")) }
         let typed = typedText(c)
         let screen = screenText(c)
         // Only a real transcript ("Name: message" lines) gets the author's turn as
@@ -119,33 +127,17 @@ public struct PromptAssembler: Sendable {
     /// sections, stable to volatile, then the typed text in an open `<text>` (or as
     /// the next conversation line) so the model continues it.
     private func assembleSections(_ c: PromptContext) -> String {
-        func tokens(_ s: String) -> Int { tokenCount?(s) ?? (s.utf8.count + 3) / 4 }
-        /// The part of `s` that fits in `limit` tokens, from its end or its start.
-        func fit(_ s: String, _ limit: Int, keepEnd: Bool) -> String {
-            guard limit > 0 else { return "" }
-            var text = s
-            var n = tokens(text)
-            while n > limit, !text.isEmpty {
-                let keep = max(1, Int(Double(text.count) * Double(limit) / Double(n) * 0.95))
-                text = keepEnd ? String(text.suffix(keep)) : String(text.prefix(keep))
-                n = tokens(text)
-            }
-            if keepEnd, text.count < s.count, let space = text.firstIndex(where: \.isWhitespace) {
-                text = String(text[text.index(after: space)...])   // start on a word
-            }
-            return text
-        }
-
         let typed = fit(strip(c.typedText), budgets.typedTokens, keepEnd: true)
         var notes = clean(c.customInstructions, limit: .max).map { fit($0, budgets.notesTokens, keepEnd: false) }
         var clip = clean(c.clipboard, limit: .max).map { fit($0, budgets.clipboardTokens, keepEnd: false) }
         var screen: String? = c.screenText.map { fit(strip($0).trimmingCharacters(in: .whitespacesAndNewlines),
                                                      budgets.screenTokens, keepEnd: true) }
         let header = situationHeader ? situation(c) : nil
+        let examples = exemplars(c)
 
         // Over the whole-prompt budget: context sections shrink in proportion
         // to their size (newest screen text and the start of notes survive).
-        let fixed = tokens(typed) + (header.map(tokens) ?? 0) + 24
+        let fixed = tokens(typed) + (header.map(tokens) ?? 0) + examples.map(tokens).reduce(0, +) + 24
         let flexible = [notes, clip, screen].map { $0.map(tokens) ?? 0 }
         let available = max(0, budgets.promptTokens - fixed)
         let total = flexible.reduce(0, +)
@@ -159,6 +151,7 @@ public struct PromptAssembler: Sendable {
         var parts: [String] = []
         if let header { parts.append("<situation>\(header)</situation>") }
         if let notes, !notes.isEmpty { parts.append("<writer>\(notes)</writer>") }
+        if !examples.isEmpty { parts.append("<examples>\n\(examples.joined(separator: "\n"))\n</examples>") }
         if let clip, !clip.isEmpty { parts.append("<clipboard>\(clip)</clipboard>") }
         if let screen, !screen.isEmpty {
             if c.isConversation {
@@ -170,6 +163,34 @@ public struct PromptAssembler: Sendable {
         }
         parts.append("<text>\n\(typed)")
         return parts.joined(separator: "\n")
+    }
+
+    private func tokens(_ s: String) -> Int { tokenCount?(s) ?? (s.utf8.count + 3) / 4 }
+
+    /// The part of `s` that fits in `limit` tokens, from its end or its start.
+    private func fit(_ s: String, _ limit: Int, keepEnd: Bool) -> String {
+        guard limit > 0 else { return "" }
+        var text = s
+        var n = tokens(text)
+        while n > limit, !text.isEmpty {
+            let keep = max(1, Int(Double(text.count) * Double(limit) / Double(n) * 0.95))
+            text = keepEnd ? String(text.suffix(keep)) : String(text.prefix(keep))
+            n = tokens(text)
+        }
+        if keepEnd, text.count < s.count, let space = text.firstIndex(where: \.isWhitespace) {
+            text = String(text[text.index(after: space)...])   // start on a word
+        }
+        return text
+    }
+
+    /// At most two style exemplars sharing `exemplarTokens`, each from its start.
+    /// Placed with the stable sections so the cached prompt prefix survives typing.
+    private func exemplars(_ c: PromptContext) -> [String] {
+        let picked = c.styleExemplars.prefix(2)
+            .map { strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !picked.isEmpty else { return [] }
+        let share = budgets.exemplarTokens / picked.count
+        return picked.map { fit($0, share, keepEnd: false) }.filter { !$0.isEmpty }
     }
 
     /// Most lines read "Speaker: message".
