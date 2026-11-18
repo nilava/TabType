@@ -30,4 +30,6 @@ struct CompletionRequest {
     var customInstructions: String = ""
     /// Per-app opt-in to learning from writing (overrides a global "off").
     var learnsFromWriting: Bool = false
+    /// Frontmost app (per-app style exemplars).
+    var bundleId: String = ""
 }

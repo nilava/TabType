@@ -38,6 +38,16 @@ public struct DecoderOptions: Sendable, Equatable {
     /// preferred by `hintBonus` (log-space) when choosing the winner.
     public var hint: [UInt8] = []
     public var hintBonus = log(3.0)
+    /// Words from the author's own writing that may come next (see
+    /// `PersonalVocabulary`). Each one's first token gets its bias added to its
+    /// logit when choosing and ranking first words; reported probabilities stay
+    /// the model's own. Empty: the step is skipped entirely.
+    public var biasTargets: [BiasTarget] = []
+    /// Guardrails: the bias only breaks ties between plausible first tokens —
+    /// those within `biasWindow` nats of the best — and is skipped when the best
+    /// is already at least `biasCeiling` likely.
+    public var biasWindow = log(8.0)
+    public var biasCeiling = 0.9
 
     public init() {}
 }
@@ -63,6 +73,10 @@ public struct CompletionResult: Sendable, Equatable {
     public var generatedTokens: Int
     /// The winner agrees with the author's past writing (`DecoderOptions.hint`).
     public var followsHint: Bool = false
+    /// The first word got a personal vocabulary bias (`DecoderOptions.biasTargets`)…
+    public var followsPersonalWord: Bool = false
+    /// …and without that bias another first word would have ranked on top.
+    public var personalWordWon: Bool = false
 }
 
 /// Confidence-scored completion on raw logits: token healing, parallel first-word
@@ -266,6 +280,7 @@ private struct Session {
         if firsts.isEmpty, let best = LogitMath.topK(promptLogits, k: 1, candidates: allowed, blocked: vocab.blocked).first {
             firsts = [best]
         }
+        let firstBias = personalBias(promptLogits, norm: norm, firsts: &firsts, fanOut: fanOut)
         // The author's own continuation joins the candidates (if the model gives it
         // any chance at all), replacing the weakest when the fan-out is full.
         var hintToken: TokenID?
@@ -333,12 +348,14 @@ private struct Session {
         // Merge candidates that render the same visible text (different
         // tokenizations of one word), summing their probability mass.
         var merged: [(text: String, logP: Double, index: Int, followsHint: Bool)] = []
+        var biasOf: [String: Double] = [:]
         for (i, c) in candidates.enumerated() {
             let text = visibleText(c)
             guard text.contains(where: { !$0.isWhitespace }) else { continue }
             let visible = Array(visibleBytes(c))
             let agrees = !options.hint.isEmpty
                 && (options.hint.starts(with: visible) || visible.starts(with: options.hint))
+            if let b = c.tokens.first.flatMap({ firstBias[$0] }) { biasOf[text] = max(biasOf[text] ?? 0, b) }
             if let j = merged.firstIndex(where: { $0.text == text }) {
                 merged[j].logP = logAddExp(merged[j].logP, c.logProbability)
                 merged[j].followsHint = merged[j].followsHint || agrees
@@ -346,9 +363,12 @@ private struct Session {
                 merged.append((text, c.logProbability, i, agrees))
             }
         }
-        // Rank with the hint bonus; report the model's true probability.
+        // Rank with the hint bonus and personal bias; report the model's true probability.
         let bonus = options.hintBonus
-        merged.sort { ($0.logP + ($0.followsHint ? bonus : 0)) > ($1.logP + ($1.followsHint ? bonus : 0)) }
+        func rank(_ m: (text: String, logP: Double, index: Int, followsHint: Bool)) -> Double {
+            m.logP + (m.followsHint ? bonus : 0) + (biasOf[m.text] ?? 0)
+        }
+        merged.sort { rank($0) > rank($1) }
         guard let best = merged.first else { return nil }
 
         // Past the first word: beam search over whole phrases (Cotypist's search),
@@ -370,6 +390,8 @@ private struct Session {
             trailingSpace = phrase.trailingSpace
         }
         let chosen = merged[root]
+        let unbiasedTop = merged.max { ($0.logP + ($0.followsHint ? bonus : 0)) < ($1.logP + ($1.followsHint ? bonus : 0)) }
+        let followsPersonalWord = biasOf[chosen.text] != nil
 
         return CompletionResult(
             text: words.map(\.text).joined(),
@@ -380,7 +402,40 @@ private struct Session {
             predictedTrailingSpace: trailingSpace,
             promptTokens: promptLength,
             generatedTokens: generated,
-            followsHint: chosen.followsHint)
+            followsHint: chosen.followsHint,
+            followsPersonalWord: followsPersonalWord,
+            personalWordWon: followsPersonalWord && unbiasedTop?.text != chosen.text)
+    }
+
+    /// The personal logit bias for first tokens (token → nats), under the
+    /// guardrails in `DecoderOptions`. A biased token that is plausible but outside
+    /// the fan-out joins `firsts`, replacing the weakest.
+    /// shortcut: steers the first word only (beam words past it are unbiased);
+    /// upgrade by recomputing n-gram targets per phrase if eval shows headroom.
+    mutating func personalBias(_ logits: Logits, norm: Float, firsts: inout [TokenID], fanOut: Int) -> [TokenID: Double] {
+        guard !options.biasTargets.isEmpty, let top = firsts.first else { return [:] }
+        let topLP = Double(logits.values[Int(top)] - norm)
+        guard exp(topLP) < options.biasCeiling else { return [:] }
+        var bias: [TokenID: Double] = [:]
+        for target in options.biasTargets {
+            // The token must commit to the word: longer than the bytes being healed
+            // (so it is consistent with them by construction).
+            guard let token = vocab.longestPrefixToken(of: heal + target.text, longerThan: heal.count),
+                  !vocab.containsNewline(token) else { continue }
+            let lp = Double(logits.values[Int(token)] - norm)
+            guard lp >= topLP - options.biasWindow, exp(lp) >= options.minFirstTokenProbability else { continue }
+            if !firsts.contains(token) {
+                // Evict the weakest unbiased candidate, never the model's best.
+                if firsts.count >= fanOut {
+                    guard let i = firsts.lastIndex(where: { bias[$0] == nil }), i > 0 else { continue }
+                    firsts.remove(at: i)
+                }
+                firsts.append(token)
+            }
+            let b = Double(min(max(target.bias, 0), PersonalVocabulary.biasRange.upperBound))
+            bias[token] = max(bias[token] ?? 0, b)
+        }
+        return bias
     }
 
     // MARK: Stage B — beam search over phrases

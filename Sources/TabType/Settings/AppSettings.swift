@@ -121,7 +121,7 @@ final class AppSettings: ObservableObject {
     }
     @Published var labsDelay: Double { didSet { defaults.set(labsDelay, forKey: Keys.labsDelay) } }
     /// How strongly the author's own phrasing steers suggestions:
-    /// "gentle" | "balanced" | "strong" (Cotypist's personalization strength).
+    /// "off" | "gentle" | "balanced" | "strong" (Cotypist's personalization strength).
     @Published var personalizationStrength: String {
         didSet { defaults.set(personalizationStrength, forKey: Keys.personalizationStrength) }
     }
@@ -129,13 +129,15 @@ final class AppSettings: ObservableObject {
     @Published var recordWithoutAccepts: Bool {
         didSet { defaults.set(recordWithoutAccepts, forKey: Keys.recordWithoutAccepts) }
     }
-    /// Log-space bonus for the author's own continuation, and the factor on the
-    /// show bar for a phrase they've used repeatedly.
-    var personalization: (bonus: Double, repeatedPhraseBar: Double) {
+    /// Log-space bonus for the author's own continuation, the factor on the show
+    /// bar for a phrase they've used repeatedly, and the strength (0…1) of the
+    /// vocabulary logit bias (`PersonalVocabulary.bias`). nil: personalization off.
+    var personalization: (bonus: Double, repeatedPhraseBar: Double, logitBias: Double)? {
         switch personalizationStrength {
-        case "gentle": return (log(1.5), 0.75)
-        case "strong": return (log(6), 0.35)
-        default: return (log(3), 0.5)
+        case "off": return nil
+        case "gentle": return (log(1.5), 0.75, 0.33)
+        case "strong": return (log(6), 0.35, 1)
+        default: return (log(3), 0.5, 0.66)
         }
     }
     @Published var collectTypingHistory: Bool {

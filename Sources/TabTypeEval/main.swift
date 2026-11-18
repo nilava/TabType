@@ -4,6 +4,7 @@
 //   tabtype-eval smoke --model <file.gguf> [--text "…"]
 //   tabtype-eval run --model <file.gguf> --cases <cases.jsonl> [--backend decoder|greedy]
 //                    [--threshold P] [--max-words N] [--extend P] [--out run.json] [--baseline run.json] [--limit N]
+//                    [--history corpus.jsonl [--bias 0…1] [--exemplars]]   (personalization, leave-one-out)
 //   tabtype-eval report <run.json> [--baseline run.json]
 //                    [--template legacy|base|chatml|chatml-nothink|gemma|llama3|phi] [--author "Name"]
 //   tabtype-eval sweep <run.json>            (confidence-threshold tradeoff of a decoder run)
@@ -114,7 +115,9 @@ case "run":
                                  sections: arguments.contains("--sections"),
                                  conversations: !arguments.contains("--plain-chat"),
                                  history: try option("--history").map { try JSONL.read(CorpusEntry.self, from: url($0)) },
-                                 hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5)
+                                 hintFactor: option("--hint-factor").flatMap(Double.init) ?? 0.5,
+                                 biasStrength: option("--bias").flatMap(Double.init) ?? 0,
+                                 exemplars: arguments.contains("--exemplars"))
     case let other:
         fail("unknown backend \(other)")
     }
@@ -127,6 +130,9 @@ case "run":
     print(EvalReport.render(run, baseline: baseline))
     if let decoder = backend as? DecoderBackend, decoder.hintsOffered > 0 {
         print("personal history: hints offered \(decoder.hintsOffered), followed \(decoder.hintsUsed)")
+    }
+    if let decoder = backend as? DecoderBackend, decoder.biasedCases > 0 {
+        print("personal vocabulary: biased cases \(decoder.biasedCases), top word was a personal word \(decoder.personalWordChosen), won because of the bias \(decoder.personalWordWon)")
     }
     print("results → \(out.path)")
 
